@@ -2,6 +2,8 @@
 venv/
 env/
 .env
+.venv/
+ENV/
 
 # Fichiers Python
 __pycache__/
@@ -25,8 +27,26 @@ wheels/
 .installed.cfg
 *.egg
 
-# Dossier PDF
+# Dossier PDF - aligné avec le nom dans config.py
 pdf_invoices_suppliers/
 
 # Logs
 *.log
+logs/
+
+# Fichiers IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers de configuration potentiellement sensibles
+config.local.py
+
+# Fichiers de cache
+.cache/
+.pytest_cache/
