@@ -1,6 +1,9 @@
 from pyairtable import Table
 from config import AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUPPLIER_TABLE_NAME
 import datetime
+import os
+import shutil
+import base64
 
 class AirtableSupplierAPI:
     def __init__(self):
@@ -153,8 +156,22 @@ class AirtableSupplierAPI:
             print(f"❌ Erreur lors de la recherche de la facture fournisseur {sellsy_id} : {e}")
             return None
 
-    def insert_or_update_supplier_invoice(self, invoice_data):
-        """Insère ou met à jour une facture fournisseur dans Airtable"""
+    def encode_file_to_base64(self, file_path):
+        """Encode un fichier en base64 pour Airtable"""
+        if not file_path or not os.path.exists(file_path):
+            print(f"⚠️ Fichier introuvable: {file_path}")
+            return None
+        
+        try:
+            with open(file_path, 'rb') as file:
+                encoded_string = base64.b64encode(file.read()).decode('utf-8')
+                return encoded_string
+        except Exception as e:
+            print(f"❌ Erreur lors de l'encodage du fichier {file_path}: {e}")
+            return None
+
+    def insert_or_update_supplier_invoice(self, invoice_data, pdf_path=None):
+        """Insère ou met à jour une facture fournisseur dans Airtable avec son PDF si disponible"""
         if not invoice_data:
             print("❌ Données de facture fournisseur invalides, impossible d'insérer/mettre à jour")
             return None
@@ -165,17 +182,37 @@ class AirtableSupplierAPI:
             return None
         
         try:
+            # Préparer les données à envoyer à Airtable
+            airtable_data = invoice_data.copy()
+            
+            # Traiter le PDF si disponible
+            if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                print(f"📎 Ajout du PDF pour la facture {sellsy_id}: {pdf_path}")
+                
+                # Encoder le PDF en base64 pour Airtable
+                pdf_base64 = self.encode_file_to_base64(pdf_path)
+                if pdf_base64:
+                    # Ajouter le PDF aux données Airtable
+                    airtable_data["PDF"] = [
+                        {
+                            "url": f"data:application/pdf;base64,{pdf_base64}",
+                            "filename": os.path.basename(pdf_path)
+                        }
+                    ]
+                else:
+                    print(f"⚠️ Impossible d'encoder le PDF pour la facture {sellsy_id}")
+            
             existing_record = self.find_supplier_invoice_by_id(sellsy_id)
 
             if existing_record:
                 record_id = existing_record["id"]
                 print(f"🔁 Facture fournisseur {sellsy_id} déjà présente, mise à jour en cours...")
-                self.table.update(record_id, invoice_data)
+                self.table.update(record_id, airtable_data)
                 print(f"✅ Facture fournisseur {sellsy_id} mise à jour avec succès.")
                 return record_id
             else:
                 print(f"➕ Facture fournisseur {sellsy_id} non trouvée, insertion en cours...")
-                record = self.table.create(invoice_data)
+                record = self.table.create(airtable_data)
                 print(f"✅ Facture fournisseur {sellsy_id} ajoutée avec succès à Airtable (ID: {record['id']}).")
                 return record['id']
         except Exception as e:
@@ -197,10 +234,26 @@ def sync_supplier_invoices_to_airtable(sellsy_api_client):
         airtable_api = AirtableSupplierAPI()
 
         # Parcours des factures récupérées et insertion ou mise à jour dans Airtable
-        for invoice in invoices:
+        for idx, invoice in enumerate(invoices):
+            print(f"📦 Traitement de la facture {idx+1}/{len(invoices)}")
+            
+            # Formatage des données pour Airtable
             formatted_invoice = airtable_api.format_supplier_invoice_for_airtable(invoice)
+            
             if formatted_invoice:
-                # Insérer ou mettre à jour sans le PDF
-                airtable_api.insert_or_update_supplier_invoice(formatted_invoice)
+                # Téléchargement du PDF si possible
+                pdf_path = None
+                if 'id' in invoice:
+                    try:
+                        pdf_path = sellsy_api_client.download_supplier_invoice_pdf(invoice['id'])
+                    except Exception as e:
+                        print(f"⚠️ Impossible de télécharger le PDF pour la facture {invoice['id']}: {e}")
+                
+                # Insérer ou mettre à jour avec le PDF si disponible
+                airtable_api.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
+            else:
+                print(f"⚠️ Formatage échoué pour la facture {invoice.get('id', 'inconnue')}")
 
         print("✅ Synchronisation terminée.")
+    else:
+        print("❌ Aucune facture fournisseur récupérée depuis Sellsy.")
