@@ -1,10 +1,6 @@
 from pyairtable import Table
 from config import AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUPPLIER_TABLE_NAME
 import datetime
-import json
-import base64
-import os
-import requests
 
 class AirtableSupplierAPI:
     def __init__(self):
@@ -157,8 +153,8 @@ class AirtableSupplierAPI:
             print(f"❌ Erreur lors de la recherche de la facture fournisseur {sellsy_id} : {e}")
             return None
 
-    def insert_or_update_supplier_invoice(self, invoice_data, pdf_path=None):
-        """Insère ou met à jour une facture fournisseur dans Airtable avec PDF"""
+    def insert_or_update_supplier_invoice(self, invoice_data):
+        """Insère ou met à jour une facture fournisseur dans Airtable"""
         if not invoice_data:
             print("❌ Données de facture fournisseur invalides, impossible d'insérer/mettre à jour")
             return None
@@ -168,54 +164,25 @@ class AirtableSupplierAPI:
             print("❌ ID Sellsy manquant dans les données, impossible d'insérer/mettre à jour")
             return None
         
-        # Créer une copie des données pour ne pas modifier l'original
-        invoice_data_copy = invoice_data.copy()
-        
-        # Ajouter la pièce jointe PDF si elle existe
-        if pdf_path and os.path.exists(pdf_path):
-            try:
-                # Vérifier la taille du fichier PDF
-                file_size = os.path.getsize(pdf_path)
-                print(f"Taille du fichier PDF: {file_size} octets")
-                
-                # Si le fichier est trop grand (plus de 2MB), utiliser un lien au lieu d'une pièce jointe
-                if file_size > 2000000:  # 2MB limite Airtable pour les attachements
-                    print(f"⚠️ Le fichier PDF est trop volumineux ({file_size/1000000:.2f} MB), utilisation du lien direct à la place")
-                    # S'assurer que le lien PDF est dans les données
-                    if "PDF_URL" in invoice_data_copy:
-                        print(f"✅ Utilisation du lien direct au lieu de la pièce jointe: {invoice_data_copy['PDF_URL']}")
-                    else:
-                        print("⚠️ Pas de lien PDF disponible, impossible d'ajouter la référence au PDF")
-                elif file_size > 0:
-                    # La méthode avec base64 cause des problèmes, utilisons l'URL du fichier
-                    if "PDF_URL" in invoice_data_copy:
-                        print(f"✅ Utilisation du lien direct au lieu de la pièce jointe: {invoice_data_copy['PDF_URL']}")
-                    else:
-                        print("⚠️ Pas de lien PDF disponible, impossible d'ajouter la référence au PDF")
-                else:
-                    print(f"⚠️ Fichier PDF vide pour la facture fournisseur {sellsy_id}, impossible d'ajouter la pièce jointe")
-            except Exception as e:
-                print(f"❌ Erreur lors de la préparation du PDF pour Airtable: {e}")
-        
         try:
             existing_record = self.find_supplier_invoice_by_id(sellsy_id)
 
             if existing_record:
                 record_id = existing_record["id"]
                 print(f"🔁 Facture fournisseur {sellsy_id} déjà présente, mise à jour en cours...")
-                self.table.update(record_id, invoice_data_copy)
+                self.table.update(record_id, invoice_data)
                 print(f"✅ Facture fournisseur {sellsy_id} mise à jour avec succès.")
                 return record_id
             else:
                 print(f"➕ Facture fournisseur {sellsy_id} non trouvée, insertion en cours...")
-                record = self.table.create(invoice_data_copy)
+                record = self.table.create(invoice_data)
                 print(f"✅ Facture fournisseur {sellsy_id} ajoutée avec succès à Airtable (ID: {record['id']}).")
                 return record['id']
         except Exception as e:
             print(f"❌ Erreur lors de l'insertion/mise à jour de la facture fournisseur {sellsy_id}: {e}")
             # Afficher les clés pour le débogage
-            print(f"Clés dans les données: {list(invoice_data_copy.keys()) if invoice_data_copy else 'N/A'}")
-            print(f"Valeur du champ Date: '{invoice_data_copy.get('Date', 'N/A')}'" if invoice_data_copy else "N/A")
+            print(f"Clés dans les données: {list(invoice_data.keys()) if invoice_data else 'N/A'}")
+            print(f"Valeur du champ Date: '{invoice_data.get('Date', 'N/A')}'" if invoice_data else "N/A")
             raise e
 
 # Code principal pour synchroniser les factures fournisseur Sellsy avec Airtable
@@ -233,9 +200,7 @@ def sync_supplier_invoices_to_airtable(sellsy_api_client):
         for invoice in invoices:
             formatted_invoice = airtable_api.format_supplier_invoice_for_airtable(invoice)
             if formatted_invoice:
-                # Télécharger le PDF pour cette facture fournisseur
-                pdf_path = sellsy_api_client.download_supplier_invoice_pdf(invoice["id"])
-                # Insérer ou mettre à jour avec le PDF
-                airtable_api.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
+                # Insérer ou mettre à jour sans le PDF
+                airtable_api.insert_or_update_supplier_invoice(formatted_invoice)
 
         print("✅ Synchronisation terminée.")
