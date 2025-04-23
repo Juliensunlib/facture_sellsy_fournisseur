@@ -12,7 +12,7 @@ SELLSY_API_URL = os.getenv("SELLSY_API_URL", "https://api.sellsy.com/v2")
 # Configuration Airtable
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
-AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME")
+AIRTABLE_SUPPLIER_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME")
 
 # Configuration du webhook
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "votre_secret_webhook")
