@@ -3,247 +3,202 @@ import time
 import logging
 import uvicorn
 import os
+
 from sellsy_api import SellsySupplierAPI
 from airtable_api import AirtableSupplierAPI, sync_supplier_invoices_to_airtable
-from webhook_handler import app  # Importation du serveur webhook
+from webhook_handler import app
 from config import CONFIG_VALID
 
 # Configuration du logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("main")
 
 def sync_supplier_invoices(days=30, batch_size=50, cooldown=2):
     """
-    Synchronise les factures fournisseur des X derniers jours depuis Sellsy vers Airtable
-    
-    Args:
-        days: Nombre de jours à synchroniser (défaut: 30)
-        batch_size: Nombre de factures par lot avant pause (défaut: 50)
-        cooldown: Temps de pause en secondes entre les lots (défaut: 2)
+    Synchronise les factures fournisseur des X derniers jours depuis Sellsy vers Airtable.
     """
     if not CONFIG_VALID:
-        logger.error("Configuration invalide, vérifiez vos variables d'environnement")
+        logger.error("Configuration invalide. Vérifiez vos variables d'environnement.")
         return
-        
+
     sellsy = SellsySupplierAPI()
     airtable = AirtableSupplierAPI()
-    
-    logger.info(f"🔄 Récupération des factures fournisseur des {days} derniers jours...")
+
+    logger.info(f"🔄 Récupération des factures des {days} derniers jours...")
     invoices = sellsy.get_supplier_invoices(days)
-    
+
     if not invoices:
         logger.info("Aucune facture fournisseur trouvée.")
         return
-    
-    logger.info(f"{len(invoices)} factures trouvées. Démarrage de la synchronisation...")
-    
-    success_count = 0
-    error_count = 0
-    
+
+    logger.info(f"{len(invoices)} factures trouvées. Début de la synchronisation...")
+
+    success, errors = 0, 0
+
     for idx, invoice in enumerate(invoices):
         invoice_id = str(invoice.get("id", ""))
         if not invoice_id:
-            logger.warning(f"Facture sans ID à l'index {idx}, ignorée")
-            error_count += 1
+            logger.warning(f"Facture sans ID détectée à l'index {idx}, ignorée.")
+            errors += 1
             continue
-            
-        logger.info(f"📦 Traitement de la facture {invoice_id} ({idx+1}/{len(invoices)})")
+
+        logger.info(f"📦 Traitement facture {invoice_id} ({idx + 1}/{len(invoices)})")
 
         try:
-            # Essai de récupération de tous les détails
             details = sellsy.get_supplier_invoice_details(invoice_id)
             source_data = details if details else invoice
+            formatted = airtable.format_supplier_invoice_for_airtable(source_data)
 
-            formatted_invoice = airtable.format_supplier_invoice_for_airtable(source_data)
-            
-            # Téléchargement du PDF
             pdf_path = None
             try:
                 pdf_path = sellsy.download_supplier_invoice_pdf(invoice_id)
             except Exception as e:
-                logger.warning(f"Erreur lors du téléchargement du PDF: {e}")
+                logger.warning(f"Erreur téléchargement PDF: {e}")
 
-            if formatted_invoice:
-                result = airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
+            if formatted:
+                result = airtable.insert_or_update_supplier_invoice(formatted, pdf_path)
                 if result:
-                    logger.info(f"✅ Facture {invoice_id} synchronisée avec Airtable (ID: {result})")
-                    success_count += 1
+                    logger.info(f"✅ Facture {invoice_id} synchronisée (Airtable ID: {result})")
+                    success += 1
                 else:
-                    logger.warning(f"⚠️ Échec de l'insertion/mise à jour pour {invoice_id}")
-                    error_count += 1
+                    logger.warning(f"⚠️ Insertion échouée pour {invoice_id}")
+                    errors += 1
             else:
                 logger.warning(f"⚠️ Formatage échoué pour {invoice_id}")
-                error_count += 1
+                errors += 1
 
-            # Pause après chaque lot pour éviter de surcharger les APIs
             if (idx + 1) % batch_size == 0 and idx < len(invoices) - 1:
-                logger.info(f"⏸️ Pause de {cooldown}s pour éviter la saturation des APIs...")
+                logger.info(f"⏸️ Pause de {cooldown}s...")
                 time.sleep(cooldown)
-                
+
         except Exception as e:
-            logger.error(f"❌ Erreur lors du traitement de la facture {invoice_id}: {e}")
-            error_count += 1
-            
-            # En cas d'erreur, faire une petite pause pour laisser les APIs respirer
+            logger.error(f"❌ Erreur traitement facture {invoice_id}: {e}")
+            errors += 1
             time.sleep(1)
 
-    logger.info(f"🎉 Synchronisation terminée. Résultats: {success_count} réussies, {error_count} échouées")
+    logger.info(f"🎉 Synchronisation terminée: {success} réussies, {errors} échouées.")
 
 def start_webhook_server(host="0.0.0.0", port=8000):
     """
-    Démarre le serveur webhook pour écouter les événements Sellsy
-    
-    Args:
-        host: Adresse IP d'écoute (défaut: 0.0.0.0)
-        port: Port d'écoute (défaut: 8000)
+    Démarre le serveur webhook pour écouter les événements Sellsy.
     """
     if not CONFIG_VALID:
-        logger.error("Configuration invalide, vérifiez vos variables d'environnement")
+        logger.error("Configuration invalide. Vérifiez vos variables d'environnement.")
         return
-        
-    logger.info(f"🚀 Démarrage du serveur webhook sur {host}:{port}")
+
+    logger.info(f"🚀 Lancement du serveur webhook sur {host}:{port}")
     
-    # Vérification du répertoire de stockage des PDFs
     pdf_dir = os.environ.get("PDF_STORAGE_DIR", "pdf_invoices_suppliers")
     if not os.path.exists(pdf_dir):
-        logger.info(f"Création du répertoire pour les PDFs: {pdf_dir}")
         os.makedirs(pdf_dir)
-    
-    # Démarrage du serveur
+        logger.info(f"Répertoire PDF créé: {pdf_dir}")
+
     try:
         uvicorn.run(app, host=host, port=port)
     except Exception as e:
-        logger.error(f"Erreur lors du démarrage du serveur webhook: {e}")
+        logger.error(f"Erreur lancement serveur webhook: {e}")
 
 def run_full_sync():
     """
-    Exécute une synchronisation complète en utilisant la fonction optimisée
+    Exécute une synchronisation complète via la méthode optimisée.
     """
     if not CONFIG_VALID:
-        logger.error("Configuration invalide, vérifiez vos variables d'environnement")
+        logger.error("Configuration invalide.")
         return
-        
-    logger.info("🔄 Démarrage de la synchronisation complète avec sellsy_api_client...")
+
+    logger.info("🔁 Synchronisation complète avec client Sellsy...")
     try:
-        sellsy_client = SellsySupplierAPI()
-        sync_supplier_invoices_to_airtable(sellsy_client)
+        sellsy = SellsySupplierAPI()
+        sync_supplier_invoices_to_airtable(sellsy)
     except Exception as e:
-        logger.error(f"Erreur lors de la synchronisation complète: {e}")
+        logger.error(f"Erreur pendant la synchronisation complète: {e}")
 
 def sync_missing_supplier_invoices(limit=1000):
     """
-    Synchronise les factures fournisseur manquantes dans Airtable
-    
-    Args:
-        limit: Nombre maximum de factures à vérifier (défaut: 1000)
+    Synchronise les factures fournisseur manquantes dans Airtable.
     """
     if not CONFIG_VALID:
-        logger.error("Configuration invalide, vérifiez vos variables d'environnement")
+        logger.error("Configuration invalide.")
         return
-        
-    limit = int(limit)
-    logger.info(f"🔍 Recherche des factures fournisseur manquantes (limite: {limit})...")
-    
-    try:
-        sellsy = SellsySupplierAPI()
-        airtable = AirtableSupplierAPI()
-        
-        # Récupération des factures fournisseur récentes
-        invoices = sellsy.get_all_supplier_invoices(limit=limit)
-        
-        if not invoices:
-            logger.warning("Aucune facture fournisseur trouvée dans Sellsy")
-            return
-            
-        logger.info(f"{len(invoices)} factures trouvées dans Sellsy. Vérification des manquantes...")
-        
-        missing_count = 0
-        sync_count = 0
-        
-        for idx, invoice in enumerate(invoices):
-            invoice_id = str(invoice.get("id", ""))
-            if not invoice_id:
-                continue
-                
-            # Vérification si la facture existe dans Airtable
-            existing = airtable.find_supplier_invoice_by_id(invoice_id)
-            
-            if not existing:
-                missing_count += 1
-                logger.info(f"📝 Facture manquante trouvée: {invoice_id} ({missing_count} au total)")
-                
-                # Récupération des détails complets
-                details = sellsy.get_supplier_invoice_details(invoice_id)
-                source_data = details if details else invoice
-                
-                # Formatage et insertion
-                formatted_invoice = airtable.format_supplier_invoice_for_airtable(source_data)
-                
-                if formatted_invoice:
-                    # Téléchargement du PDF
-                    pdf_path = None
-                    try:
-                        pdf_path = sellsy.download_supplier_invoice_pdf(invoice_id)
-                    except Exception as e:
-                        logger.warning(f"Erreur lors du téléchargement du PDF: {e}")
-                        
-                    # Insertion dans Airtable
-                    result = airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
-                    
-                    if result:
-                        sync_count += 1
-                        logger.info(f"✅ Facture {invoice_id} ajoutée à Airtable (ID: {result})")
-                    else:
-                        logger.warning(f"⚠️ Échec de l'insertion pour {invoice_id}")
-            
-            # Affichage du progrès
-            if (idx + 1) % 50 == 0:
-                logger.info(f"Progression: {idx + 1}/{len(invoices)} factures vérifiées")
-            
-            # Pause toutes les 10 factures manquantes pour éviter de surcharger les APIs
-            if missing_count > 0 and missing_count % 10 == 0:
-                logger.info("⏸️ Pause de 2s pour éviter la saturation des APIs...")
+
+    sellsy = SellsySupplierAPI()
+    airtable = AirtableSupplierAPI()
+
+    logger.info(f"🔍 Recherche des factures manquantes (limite: {limit})...")
+    invoices = sellsy.get_all_supplier_invoices(limit)
+
+    if not invoices:
+        logger.warning("Aucune facture trouvée.")
+        return
+
+    missing, synced = 0, 0
+
+    for idx, invoice in enumerate(invoices):
+        invoice_id = str(invoice.get("id", ""))
+        if not invoice_id:
+            continue
+
+        existing = airtable.find_supplier_invoice_by_id(invoice_id)
+
+        if not existing:
+            missing += 1
+            logger.info(f"📝 Facture manquante: {invoice_id}")
+
+            details = sellsy.get_supplier_invoice_details(invoice_id)
+            source_data = details if details else invoice
+            formatted = airtable.format_supplier_invoice_for_airtable(source_data)
+
+            if formatted:
+                pdf_path = None
+                try:
+                    pdf_path = sellsy.download_supplier_invoice_pdf(invoice_id)
+                except Exception as e:
+                    logger.warning(f"Erreur PDF: {e}")
+
+                result = airtable.insert_or_update_supplier_invoice(formatted, pdf_path)
+
+                if result:
+                    synced += 1
+                    logger.info(f"✅ Facture ajoutée: {invoice_id}")
+                else:
+                    logger.warning(f"⚠️ Échec insertion: {invoice_id}")
+
+            if missing % 10 == 0:
+                logger.info("⏸️ Pause de 2s pour éviter saturation...")
                 time.sleep(2)
-        
-        logger.info(f"🎉 Vérification terminée: {missing_count} factures manquantes trouvées, {sync_count} synchronisées avec succès")
-        
-    except Exception as e:
-        logger.error(f"❌ Erreur lors de la synchronisation des factures manquantes: {e}")
+
+        if (idx + 1) % 50 == 0:
+            logger.info(f"Progression: {idx + 1}/{len(invoices)}")
+
+    logger.info(f"🔚 Vérification terminée. {missing} manquantes, {synced} synchronisées.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Synchronisation Sellsy -> Airtable")
+    parser = argparse.ArgumentParser(description="Sync Sellsy vers Airtable")
     subparsers = parser.add_subparsers(dest="command")
 
-    # Commande sync
-    sync_parser = subparsers.add_parser("sync", help="Synchroniser les factures fournisseur")
-    sync_parser.add_argument("--days", type=int, default=30, help="Nombre de jours à synchroniser")
-    sync_parser.add_argument("--batch", type=int, default=50, help="Taille des lots de traitement")
-    sync_parser.add_argument("--cooldown", type=int, default=2, help="Temps de pause entre les lots (secondes)")
+    sync_parser = subparsers.add_parser("sync", help="Synchroniser les factures récentes")
+    sync_parser.add_argument("--days", type=int, default=30, help="Jours à synchroniser")
+    sync_parser.add_argument("--batch", type=int, default=50, help="Taille du lot")
+    sync_parser.add_argument("--cooldown", type=int, default=2, help="Pause entre lots (s)")
 
-    # Commande fullsync (utilise la fonction optimisée)
-    subparsers.add_parser("fullsync", help="Exécute une synchronisation complète optimisée")
+    subparsers.add_parser("fullsync", help="Synchronisation complète optimisée")
 
-    # Commande webhook
-    webhook_parser = subparsers.add_parser("webhook", help="Démarrer le serveur webhook")
-    webhook_parser.add_argument("--host", type=str, default="0.0.0.0", help="Adresse IP d'écoute")
-    webhook_parser.add_argument("--port", type=int, default=8000, help="Port d'écoute")
-    
-    # Commande sync-missing-supplier
-    missing_parser = subparsers.add_parser("sync-missing-supplier", help="Synchroniser les factures fournisseur manquantes")
-    missing_parser.add_argument("--limit", type=int, default=1000, help="Nombre maximum de factures à vérifier")
+    webhook_parser = subparsers.add_parser("webhook", help="Lancer serveur webhook")
+    webhook_parser.add_argument("--host", type=str, default="0.0.0.0")
+    webhook_parser.add_argument("--port", type=int, default=8000)
 
-    # Analyse des arguments
+    missing_parser = subparsers.add_parser("sync-missing-supplier", help="Sync factures manquantes")
+    missing_parser.add_argument("--limit", type=int, default=1000, help="Limite de factures à analyser")
+
     args = parser.parse_args()
-    
-    # Vérification des variables d'environnement
+
     if not CONFIG_VALID:
-        print("⚠️  Configuration incomplète. Vérifiez votre fichier .env ou les variables d'environnement.")
+        print("⚠️ Configuration invalide. Vérifiez vos variables d'environnement.")
         exit(1)
-    
-    # Exécution de la commande appropriée
+
     if args.command == "sync":
         sync_supplier_invoices(args.days, args.batch, args.cooldown)
     elif args.command == "fullsync":
