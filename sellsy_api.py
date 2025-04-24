@@ -584,549 +584,180 @@ class SellsySupplierAPI:
         
         return normalized_data
 
-   def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
-    """
-    Télécharge le PDF d'une facture fournisseur et le stocke localement.
-    
-    Args:
-        invoice_id: ID de la facture fournisseur
+    def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
+        """
+        Télécharge le PDF d'une facture fournisseur et le stocke localement.
         
-    Returns:
-        Chemin du fichier PDF téléchargé ou None en cas d'erreur
-    """
-    logger.info(f"Téléchargement du PDF pour la facture fournisseur {invoice_id}")
+        Args:
+            invoice_id: ID de la facture fournisseur
+            
+        Returns:
+            Chemin du fichier PDF téléchargé ou None en cas d'erreur
+        """
+        logger.info(f"Téléchargement du PDF pour la facture fournisseur {invoice_id}")
+        
+        try:
+            # Récupérer les détails bruts de la facture pour obtenir l'URL du PDF
+            # On utilise les détails bruts car l'URL du PDF peut être dans n'importe quel champ
+            invoice_details = self.get_supplier_invoice_details(invoice_id)
+            
+            if not invoice_details:
+                logger.warning(f"Détails de la facture {invoice_id} non trouvés")
+                return None
+            
+            # Chercher l'URL du PDF dans différents champs possibles
+            pdf_url = None
+            pdf_fields = ["pdf_url", "pdfUrl", "pdf_link", "downloadUrl", "public_link", "pdf"]
+            
+            for field in pdf_fields:
+                if field in invoice_details and invoice_details[field]:
+                    pdf_url = invoice_details[field]
+                    logger.info(f"URL PDF trouvée via champ {field}: {pdf_url}")
+                    break
+            
+            if not pdf_url:
+                # Essayer de générer l'URL du PDF via une API dédiée
+                logger.info("Tentative de génération du PDF via l'API")
+                pdf_params = {
+                    "docid": invoice_id,
+                    "doctype": "supplierinvoice"
+                }
+                pdf_result = self._make_api_request("Document.getPdf", pdf_params)
+                
+                if pdf_result and isinstance(pdf_result, dict) and "downloadUrl" in pdf_result:
+                    pdf_url = pdf_result["downloadUrl"]
+                    logger.info(f"URL PDF générée: {pdf_url}")
+            
+            if not pdf_url:
+                logger.warning(f"URL PDF non trouvée pour la facture {invoice_id}")
+                return None
+            
+            # Créer le chemin de destination
+            pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
+            
+            # Télécharger le PDF
+            logger.info(f"Téléchargement du PDF depuis {pdf_url}")
+            
+            response = requests.get(pdf_url, timeout=60)
+            if response.status_code == 200:
+                with open(pdf_path, 'wb') as f:
+                    f.write(response.content)
+                    
+                logger.info(f"✅ PDF téléchargé et enregistré dans {pdf_path}")
+                return pdf_path
+            else:
+                logger.error(f"❌ Échec du téléchargement du PDF: code HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Exception lors du téléchargement du PDF: {str(e)}")
+            return None
+
+    def update_supplier_invoice_status(self, invoice_id: str, new_status: str) -> bool:
+        """
+        Met à jour le statut d'une facture fournisseur
+        
+        Args:
+            invoice_id: ID de la facture à mettre à jour
+            new_status: Nouveau statut (par exemple: "paid", "pending", "validated")
+        
+        Returns:
+            True si la mise à jour a réussi, False sinon
+        """
+        logger.info(f"Mise à jour du statut de la facture {invoice_id} vers '{new_status}'")
+        
+        params = {
+            "id": invoice_id,
+            "status": new_status
+        }
+        
+        # Essayer différentes méthodes pour mettre à jour le statut
+        methods_to_try = [
+            "Purchase.updateStatus",
+            "Document.updateStatus",
+            "SupplierInvoice.updateStatus"
+        ]
+        
+        for method in methods_to_try:
+            logger.info(f"Tentative de mise à jour avec la méthode {method}")
+            result = self._make_api_request(method, params)
+            
+            if result and isinstance(result, dict) and result.get("status") == "success":
+                logger.info(f"✅ Statut de la facture {invoice_id} mis à jour avec succès")
+                return True
+                
+        logger.error(f"❌ Échec de la mise à jour du statut de la facture {invoice_id}")
+        return False
     
-    try:
-        # Récupérer les détails bruts de la facture pour obtenir l'URL du PDF
-        # On utilise les détails bruts car l'URL du PDF peut être dans n'importe quel champ
+    def get_invoice_payments(self, invoice_id: str) -> List[Dict]:
+        """
+        Récupère tous les paiements associés à une facture
+        
+        Args:
+            invoice_id: ID de la facture
+            
+        Returns:
+            Liste des paiements associés à la facture
+        """
+        logger.info(f"Récupération des paiements pour la facture {invoice_id}")
+        
+        # D'abord récupérer les détails de la facture qui contiennent les paiements
         invoice_details = self.get_supplier_invoice_details(invoice_id)
         
         if not invoice_details:
-            logger.warning(f"Détails de la facture {invoice_id} non trouvés")
-            return None
-        
-        # Chercher l'URL du PDF dans différents champs possibles
-        pdf_url = None
-        pdf_fields = ["pdf_url", "pdfUrl", "pdf_link", "downloadUrl", "public_link", "pdf"]
-        
-        for field in pdf_fields:
-            if field in invoice_details and invoice_details[field]:
-                pdf_url = invoice_details[field]
-                logger.info(f"URL PDF trouvée via champ {field}: {pdf_url}")
-                break
-        
-        if not pdf_url:
-            # Essayer de générer l'URL du PDF via une API dédiée
-            logger.info("Tentative de génération du PDF via l'API")
-            pdf_params = {
-                "docid": invoice_id,
-                "doctype": "supplierinvoice"
-            }
-            pdf_result = self._make_api_request("Document.getPdf", pdf_params)
+            logger.warning(f"Aucun détail trouvé pour la facture {invoice_id}")
+            return []
             
-            if pdf_result and isinstance(pdf_result, dict) and "downloadUrl" in pdf_result:
-                pdf_url = pdf_result["downloadUrl"]
-                logger.info(f"URL PDF générée: {pdf_url}")
+        # Extraction des paiements si présent dans la structure 'relateds'
+        payments = []
+        if "payments" in invoice_details:
+            payments = invoice_details["payments"]
+        elif "relateds" in invoice_details:
+            payments = self.extract_relateds(invoice_details["relateds"])
         
-        if not pdf_url:
-            logger.warning(f"URL PDF non trouvée pour la facture {invoice_id}")
-            return None
-        
-        # Créer le chemin de destination
-        pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
-        
-        # Télécharger le PDF
-        logger.info(f"Téléchargement du PDF depuis {pdf_url}")
-        
-        response = requests.get(pdf_url, timeout=60)
-        if response.status_code == 200:
-            with open(pdf_path, 'wb') as f:
-                f.write(response.content)
-                
-            logger.info(f"✅ PDF téléchargé et enregistré dans {pdf_path}")
-            return pdf_path
-        else:
-            logger.error(f"❌ Échec du téléchargement du PDF: code HTTP {response.status_code}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"❌ Erreur lors du téléchargement du PDF: {e}")
-        return None
+        logger.info(f"Nombre de paiements trouvés: {len(payments)}")
+        return payments
 
-def get_supplier_invoices_by_date_range(self, start_date: str, end_date: str, limit: int = 1000) -> List[Dict]:
-    """
-    Récupère les factures fournisseurs dans une plage de dates spécifique.
-    
-    Args:
-        start_date: Date de début au format YYYY-MM-DD
-        end_date: Date de fin au format YYYY-MM-DD
-        limit: Nombre maximum de factures à récupérer
+    def create_payment(self, invoice_id: str, amount: float, date: str, 
+                      medium: str = "manual", notes: str = "") -> bool:
+        """
+        Crée un paiement pour une facture fournisseur
         
-    Returns:
-        Liste des factures fournisseurs dans la plage de dates
-    """
-    logger.info(f"Récupération des factures fournisseurs du {start_date} au {end_date}")
-    
-    # CORRECTION: Utilisation de Purchase.getList au lieu de Accounting.getList
-    params = {
-        "pagination": {
-            "nbperpage": limit,
-            "pagenum": 1
-        },
-        "search": {
-            "doctype": "supplierinvoice",
-            "periodecreated_start": start_date,
-            "periodecreated_end": end_date
-        }
-    }
-    
-    result = self._make_api_request("Purchase.getList", params)
-    
-    # Si la première méthode ne fonctionne pas, essayer une alternative
-    if not result or not isinstance(result, dict) or len(result) == 0:
-        logger.warning("Première méthode infructueuse, essai avec une méthode alternative")
+        Args:
+            invoice_id: ID de la facture
+            amount: Montant du paiement
+            date: Date du paiement (format: YYYY-MM-DD)
+            medium: Moyen de paiement (par exemple: "manual", "bank", "check")
+            notes: Notes associées au paiement
+            
+        Returns:
+            True si la création a réussi, False sinon
+        """
+        logger.info(f"Création d'un paiement de {amount} pour la facture {invoice_id}")
         
-        # Méthode alternative 1
         params = {
-            "type": "supplierinvoice",
-            "nbperpage": limit,
-            "search": {
-                "created_start": start_date,
-                "created_end": end_date
-            }
+            "linkedid": invoice_id,
+            "linkedtype": "supplierinvoice",
+            "amount": amount,
+            "date": date,
+            "medium": medium,
+            "notes": notes
         }
-        result = self._make_api_request("Accounting.getAccountingDocuments", params)
-    
-    # Traitement identique à get_all_supplier_invoices
-    invoices = []
-    
-    if isinstance(result, dict):
-        # Structure possible 1: dictionnaire avec des clés numériques
-        if all(k.isdigit() for k in result.keys() if k != '_xml_childtag'):
-            logger.info("Structure détectée: dictionnaire avec clés numériques")
-            for k, v in result.items():
-                if k != '_xml_childtag' and isinstance(v, dict):
-                    invoices.append(self.normalize_invoice_data(v))
         
-        # Structure possible 2: liste dans un champ spécifique
-        elif any(field in result for field in ['result', 'list', 'data', 'invoices', 'documents']):
-            logger.info("Structure détectée: liste dans un champ spécifique")
-            for field in ['result', 'list', 'data', 'invoices', 'documents']:
-                if field in result and result[field]:
-                    if isinstance(result[field], dict):
-                        for k, v in result[field].items():
-                            if k != '_xml_childtag' and isinstance(v, dict):
-                                invoices.append(self.normalize_invoice_data(v))
-                    elif isinstance(result[field], list):
-                        for item in result[field]:
-                            if isinstance(item, dict):
-                                invoices.append(self.normalize_invoice_data(item))
+        # Essayer différentes méthodes pour créer un paiement
+        methods_to_try = [
+            "Purchase.createPayment",
+            "Payment.create",
+            "SupplierInvoice.createPayment"
+        ]
         
-        # Structure possible 3: résultat direct
-        else:
-            logger.info("Structure détectée: structure inconnue, tentative de normalisation directe")
-            invoices = [self.normalize_invoice_data(result)]
+        for method in methods_to_try:
+            logger.info(f"Tentative de création avec la méthode {method}")
+            result = self._make_api_request(method, params)
             
-    elif isinstance(result, list):
-        logger.info("Structure détectée: liste directe")
-        invoices = [self.normalize_invoice_data(item) for item in result if isinstance(item, dict)]
-    
-    logger.info(f"Nombre de factures récupérées après traitement: {len(invoices)}")
-    return invoices
-
-def get_suppliers(self, limit: int = 1000) -> List[Dict]:
-    """
-    Récupère la liste des fournisseurs depuis Sellsy.
-    
-    Args:
-        limit: Nombre maximum de fournisseurs à récupérer
-        
-    Returns:
-        Liste des fournisseurs
-    """
-    logger.info(f"Récupération de la liste des fournisseurs (limite: {limit})")
-    
-    params = {
-        "pagination": {
-            "nbperpage": limit,
-            "pagenum": 1
-        },
-        "search": {
-            "isSupplier": "Y"  # Filtrer uniquement les fournisseurs
-        }
-    }
-    
-    result = self._make_api_request("People.getList", params)
-    
-    suppliers = []
-    
-    # Traitement des résultats selon leur structure
-    if isinstance(result, dict):
-        # Structure possible 1: dictionnaire avec des clés numériques
-        if all(k.isdigit() for k in result.keys() if k != '_xml_childtag'):
-            for k, v in result.items():
-                if k != '_xml_childtag' and isinstance(v, dict):
-                    suppliers.append(self.normalize_supplier_data(v))
-        
-        # Structure possible 2: liste dans un champ spécifique
-        elif any(field in result for field in ['result', 'list', 'data']):
-            for field in ['result', 'list', 'data']:
-                if field in result and result[field]:
-                    if isinstance(result[field], dict):
-                        for k, v in result[field].items():
-                            if k != '_xml_childtag' and isinstance(v, dict):
-                                suppliers.append(self.normalize_supplier_data(v))
-                    elif isinstance(result[field], list):
-                        for item in result[field]:
-                            if isinstance(item, dict):
-                                suppliers.append(self.normalize_supplier_data(item))
-    
-    elif isinstance(result, list):
-        suppliers = [self.normalize_supplier_data(item) for item in result if isinstance(item, dict)]
-    
-    logger.info(f"Nombre de fournisseurs récupérés: {len(suppliers)}")
-    return suppliers
-
-def normalize_supplier_data(self, supplier_details: Dict) -> Dict:
-    """
-    Normalise les données d'un fournisseur pour un usage cohérent.
-    
-    Args:
-        supplier_details: Dictionnaire contenant les détails du fournisseur
-        
-    Returns:
-        Dictionnaire normalisé des détails du fournisseur
-    """
-    if not supplier_details:
-        return {}
-        
-    normalized_data = {}
-    
-    # Champs de base - direct mapping avec vérification d'existence
-    base_fields = [
-        "id", "corpid", "ownerid", "type", "status", "name", "web", "siret", 
-        "siren", "vat", "rcs", "fax", "tel", "mobile", "email", "apenaf", 
-        "rna", "ident", "joindate", "auxCode", "picture", "phonecall", 
-        "isclientofsellsy", "maincontactid", "maincontactcivility", 
-        "maincontactname", "maincontactlinkid", "simpleDesc", "source",
-        "capital", "accountingCode", "auxCode", "buyer_account_id"
-    ]
-    
-    for field in base_fields:
-        if field in supplier_details:
-            normalized_data[field] = supplier_details[field]
-    
-    # Si l'ID est manquant mais qu'un identifiant alternatif est présent
-    if "id" not in normalized_data:
-        for alt_id_field in ["peopleid", "supplier_id", "thirdid"]:
-            if alt_id_field in supplier_details:
-                normalized_data["id"] = supplier_details[alt_id_field]
-                break
-    
-    # Traitement des adresses
-    if "address" in supplier_details and isinstance(supplier_details["address"], dict):
-        normalized_data["address"] = self.extract_address_data(supplier_details["address"])
-    
-    # Récupération des contacts liés
-    if "contacts" in supplier_details and isinstance(supplier_details["contacts"], dict):
-        contacts = []
-        for k, v in supplier_details["contacts"].items():
-            if k != '_xml_childtag' and isinstance(v, dict):
-                contact = {
-                    "id": v.get("id", ""),
-                    "name": v.get("name", ""),
-                    "email": v.get("email", ""),
-                    "tel": v.get("tel", ""),
-                    "mobile": v.get("mobile", ""),
-                    "position": v.get("position", "")
-                }
-                contacts.append(contact)
-        
-        normalized_data["contacts"] = contacts
-        
-        # Ajouter le premier contact pour un accès facile
-        if contacts:
-            first_contact = contacts[0]
-            normalized_data["contact_name"] = first_contact.get("name", "")
-            normalized_data["contact_email"] = first_contact.get("email", "")
-            normalized_data["contact_tel"] = first_contact.get("tel", "")
-    
-    return normalized_data
-
-def get_supplier_payments(self, supplier_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
-    """
-    Récupère les paiements des fournisseurs, avec des filtres optionnels.
-    
-    Args:
-        supplier_id: ID du fournisseur (optionnel)
-        start_date: Date de début au format YYYY-MM-DD (optionnel)
-        end_date: Date de fin au format YYYY-MM-DD (optionnel)
-        limit: Nombre maximum de paiements à récupérer
-        
-    Returns:
-        Liste des paiements fournisseurs
-    """
-    logger.info(f"Récupération des paiements fournisseurs")
-    
-    params = {
-        "pagination": {
-            "nbperpage": limit,
-            "pagenum": 1
-        },
-        "search": {
-            "accounting": "supplier"  # Filtrer pour les paiements fournisseurs
-        }
-    }
-    
-    # Ajouter les filtres optionnels
-    if supplier_id:
-        params["search"]["thirdid"] = supplier_id
-    
-    if start_date:
-        params["search"]["periodecreated_start"] = start_date
-    
-    if end_date:
-        params["search"]["periodecreated_end"] = end_date
-    
-    result = self._make_api_request("Accounting.getPaymentsList", params)
-    
-    payments = []
-    
-    # Traitement des résultats selon leur structure
-    if isinstance(result, dict):
-        # Structure possible 1: dictionnaire avec des clés numériques
-        if all(k.isdigit() for k in result.keys() if k != '_xml_childtag'):
-            for k, v in result.items():
-                if k != '_xml_childtag' and isinstance(v, dict):
-                    payments.append(self.normalize_payment_data(v))
-        
-        # Structure possible 2: liste dans un champ spécifique
-        elif any(field in result for field in ['result', 'list', 'data', 'payments']):
-            for field in ['result', 'list', 'data', 'payments']:
-                if field in result and result[field]:
-                    if isinstance(result[field], dict):
-                        for k, v in result[field].items():
-                            if k != '_xml_childtag' and isinstance(v, dict):
-                                payments.append(self.normalize_payment_data(v))
-                    elif isinstance(result[field], list):
-                        for item in result[field]:
-                            if isinstance(item, dict):
-                                payments.append(self.normalize_payment_data(item))
-    
-    elif isinstance(result, list):
-        payments = [self.normalize_payment_data(item) for item in result if isinstance(item, dict)]
-    
-    logger.info(f"Nombre de paiements récupérés: {len(payments)}")
-    return payments
-
-def normalize_payment_data(self, payment_details: Dict) -> Dict:
-    """
-    Normalise les données d'un paiement pour un usage cohérent.
-    
-    Args:
-        payment_details: Dictionnaire contenant les détails du paiement
-        
-    Returns:
-        Dictionnaire normalisé des détails du paiement
-    """
-    if not payment_details:
-        return {}
-        
-    normalized_data = {}
-    
-    # Champs de base - direct mapping avec vérification d'existence
-    base_fields = [
-        "id", "parentid", "corpid", "thirdid", "date", "amount", 
-        "amount_convertedlocal", "amount_convertedeuro", "currency", 
-        "currencysymbol", "medium", "sysCreated", "sysModified", 
-        "accOwner", "accOwnerName", "isPaybackForThird", "isPaybackFromThird", 
-        "isDeposit", "ident", "refAccounting", "validated", "linked", 
-        "note", "idPaymentMethod", "linkedAmount", "unlinkedAmount"
-    ]
-    
-    for field in base_fields:
-        if field in payment_details:
-            normalized_data[field] = payment_details[field]
-    
-    # Si l'ID est manquant mais qu'un identifiant alternatif est présent
-    if "id" not in normalized_data:
-        for alt_id_field in ["paymentid", "payment_id"]:
-            if alt_id_field in payment_details:
-                normalized_data["id"] = payment_details[alt_id_field]
-                break
-    
-    # Récupérer les informations du fournisseur si présentes
-    if "third" in payment_details and isinstance(payment_details["third"], dict):
-        third = payment_details["third"]
-        normalized_data["third_name"] = third.get("name", "")
-        normalized_data["third_ident"] = third.get("ident", "")
-    
-    # Récupérer les factures liées à ce paiement
-    if "linkedDocs" in payment_details and isinstance(payment_details["linkedDocs"], dict):
-        linked_docs = []
-        for k, v in payment_details["linkedDocs"].items():
-            if k != '_xml_childtag' and isinstance(v, dict):
-                linked_doc = {
-                    "id": v.get("id", ""),
-                    "amount": v.get("amount", ""),
-                    "doctype": v.get("doctype", ""),
-                    "ident": v.get("ident", ""),
-                    "date": v.get("date", "")
-                }
-                linked_docs.append(linked_doc)
-        
-        normalized_data["linked_documents"] = linked_docs
-        normalized_data["linked_documents_count"] = len(linked_docs)
-    
-    return normalized_data
-
-def batch_download_invoices(self, invoice_ids: List[str], max_retries: int = 3) -> Dict[str, str]:
-    """
-    Télécharge par lots les PDFs de plusieurs factures fournisseurs.
-    
-    Args:
-        invoice_ids: Liste des IDs de factures à télécharger
-        max_retries: Nombre maximum de tentatives par facture en cas d'échec
-        
-    Returns:
-        Dictionnaire avec les IDs des factures en clé et les chemins des PDFs en valeur
-    """
-    logger.info(f"Téléchargement par lots de {len(invoice_ids)} factures")
-    
-    results = {}
-    
-    for invoice_id in invoice_ids:
-        success = False
-        
-        for attempt in range(max_retries):
-            try:
-                pdf_path = self.download_supplier_invoice_pdf(invoice_id)
+            if result:
+                logger.info(f"✅ Paiement créé avec succès pour la facture {invoice_id}")
+                return True
                 
-                if pdf_path:
-                    results[invoice_id] = pdf_path
-                    success = True
-                    logger.info(f"✅ Facture {invoice_id} téléchargée avec succès")
-                    break
-                
-            except Exception as e:
-                logger.error(f"❌ Erreur lors du téléchargement de la facture {invoice_id}: {e}")
-            
-            # Si ce n'est pas la dernière tentative, attendre avant de réessayer
-            if attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 5  # Temps d'attente exponentiel: 5s, 10s, 15s...
-                logger.info(f"Nouvelle tentative dans {wait_time}s pour la facture {invoice_id}")
-                time.sleep(wait_time)
-        
-        if not success:
-            logger.warning(f"⚠️ Échec du téléchargement de la facture {invoice_id} après {max_retries} tentatives")
-    
-    logger.info(f"Téléchargement terminé: {len(results)}/{len(invoice_ids)} factures téléchargées avec succès")
-    return results
-
-def run_complete_sync(self, start_date: str = None, end_date: str = None, limit: int = 1000, download_pdfs: bool = True) -> Dict:
-    """
-    Effectue une synchronisation complète des factures fournisseurs et télécharge optionnellement les PDFs.
-    
-    Args:
-        start_date: Date de début au format YYYY-MM-DD (optionnel)
-        end_date: Date de fin au format YYYY-MM-DD (optionnel)
-        limit: Nombre maximum de factures à récupérer
-        download_pdfs: Si True, télécharge les PDFs des factures
-        
-    Returns:
-        Résultats de la synchronisation
-    """
-    start_time = time.time()
-    logger.info(f"🚀 Démarrage de la synchronisation complète des factures fournisseurs")
-    
-    results = {
-        "invoices": [],
-        "suppliers": [],
-        "total_invoices": 0,
-        "total_suppliers": 0,
-        "downloaded_pdfs": 0,
-        "failed_pdfs": 0
-    }
-    
-    # 1. Récupérer toutes les factures fournisseurs
-    if start_date and end_date:
-        logger.info(f"Récupération des factures du {start_date} au {end_date}")
-        invoices = self.get_supplier_invoices_by_date_range(start_date, end_date, limit)
-    else:
-        logger.info("Récupération de toutes les factures fournisseurs")
-        invoices = self.get_all_supplier_invoices(limit)
-    
-    results["total_invoices"] = len(invoices)
-    results["invoices"] = invoices
-    
-    # 2. Récupérer tous les fournisseurs
-    suppliers = self.get_suppliers(limit)
-    results["total_suppliers"] = len(suppliers)
-    results["suppliers"] = suppliers
-    
-    # 3. Télécharger les PDFs si demandé
-    if download_pdfs and invoices:
-        logger.info(f"Téléchargement des PDFs pour {len(invoices)} factures")
-        
-        invoice_ids = [invoice.get("id") for invoice in invoices if invoice.get("id")]
-        pdf_results = self.batch_download_invoices(invoice_ids)
-        
-        results["downloaded_pdfs"] = len(pdf_results)
-        results["failed_pdfs"] = len(invoice_ids) - len(pdf_results)
-        results["pdf_paths"] = pdf_results
-    
-    # Calculer le temps d'exécution
-    execution_time = time.time() - start_time
-    results["execution_time"] = execution_time
-    
-    logger.info(f"✅ Synchronisation terminée en {execution_time:.2f} secondes")
-    logger.info(f"📊 Résultats: {results['total_invoices']} factures, {results['total_suppliers']} fournisseurs")
-    
-    if download_pdfs:
-        logger.info(f"📄 PDFs: {results['downloaded_pdfs']} téléchargés, {results['failed_pdfs']} échecs")
-    
-    return results
-
-def __repr__(self):
-    """Représentation de la classe pour le debugging"""
-    return f"SellsySupplierAPI(url={self.api_url})"
-
-def __str__(self):
-    """Représentation sous forme de chaîne"""
-    return f"API Sellsy pour les factures fournisseurs"
-
-
-# Exemple d'utilisation si ce fichier est exécuté directement
-if __name__ == "__main__":
-    try:
-        # Créer l'instance de l'API
-        api = SellsySupplierAPI()
-        
-        # Tester la connexion
-        if api.test_connection():
-            print("Connexion à l'API Sellsy établie avec succès!")
-            
-            # Exemple: explorer les méthodes API disponibles
-            # api.explore_api_methods()
-            
-            # Exemple: récupérer toutes les factures fournisseurs
-            invoices = api.get_all_supplier_invoices(limit=10)
-            print(f"Nombre de factures récupérées: {len(invoices)}")
-            
-            if invoices:
-                # Afficher les détails de la première facture
-                first_invoice = invoices[0]
-                print(f"Détails de la facture {first_invoice.get('id', 'N/A')}:")
-                print(json.dumps(first_invoice, indent=2, ensure_ascii=False))
-                
-                # Télécharger le PDF de la première facture
-                invoice_id = first_invoice.get('id')
-                if invoice_id:
-                    pdf_path = api.download_supplier_invoice_pdf(invoice_id)
-                    if pdf_path:
-                        print(f"PDF téléchargé: {pdf_path}")
-        else:
-            print("Échec de la connexion à l'API Sellsy")
-    
-    except Exception as e:
-        print(f"Erreur: {e}")
+        logger.error(f"❌ Échec de la création du paiement pour la facture {invoice_id}")
+        return False
