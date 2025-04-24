@@ -93,7 +93,7 @@ class SellsySupplierAPI:
                             error_msg = data.get('error', 'Erreur inconnue')
                             logger.error(f"Erreur API Sellsy v1: {error_msg}")
 
-                            if 'rate limit' in error_msg.lower():
+                            if isinstance(error_msg, str) and 'rate limit' in error_msg.lower():
                                 logger.warning("Limite atteinte, nouvelle tentative après 60s")
                                 time.sleep(60)
                                 continue
@@ -122,7 +122,8 @@ class SellsySupplierAPI:
         params = {
             'limit': limit
         }
-        return self._make_api_request('Accounting.getAllInvoices', params) or []
+        # Remplacer 'Accounting.getAllInvoices' par 'Accounting.getInvoices'
+        return self._make_api_request('Accounting.getInvoices', params) or []
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Dict:
         """
