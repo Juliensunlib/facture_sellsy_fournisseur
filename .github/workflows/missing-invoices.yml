@@ -1,11 +1,11 @@
-name: Sync Missing Supplier Invoices
+name: Sync Missing Invoices
 
 on:
   # Permettre l'exécution manuelle depuis l'interface GitHub
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Nombre maximum de factures fournisseur à vérifier'
+        description: 'Nombre maximum de factures à vérifier'
         required: false
         default: '1000'
         type: string
@@ -35,20 +35,22 @@ jobs:
         if [ -z "${{ secrets.SELLSY_CLIENT_SECRET }}" ]; then echo "SELLSY_CLIENT_SECRET manquant"; fi
         if [ -z "${{ secrets.AIRTABLE_API_KEY }}" ]; then echo "AIRTABLE_API_KEY manquant"; fi
         if [ -z "${{ secrets.AIRTABLE_BASE_ID }}" ]; then echo "AIRTABLE_BASE_ID manquant"; fi
+        if [ -z "${{ secrets.AIRTABLE_TABLE_NAME }}" ]; then echo "AIRTABLE_TABLE_NAME manquant"; fi
         if [ -z "${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}" ]; then echo "AIRTABLE_SUPPLIER_TABLE_NAME manquant"; fi
         
-    - name: Sync missing supplier invoices
+    - name: Sync missing invoices
       env:
         SELLSY_CLIENT_ID: ${{ secrets.SELLSY_CLIENT_ID }}
         SELLSY_CLIENT_SECRET: ${{ secrets.SELLSY_CLIENT_SECRET }}
         SELLSY_API_URL: ${{ secrets.SELLSY_API_URL || 'https://api.sellsy.com/v2' }}
         AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
         AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-        AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}
+        AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
+        AIRTABLE_SUPPLIER_TABLE_NAME: ${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}
       run: |
         echo "Variables d'environnement configurées."
-        echo "Début de la synchronisation des factures fournisseur manquantes..."
-        python main.py sync-missing-supplier --limit ${{ github.event.inputs.limit }}
+        echo "Début de la synchronisation des factures manquantes..."
+        python main.py sync-missing --limit ${{ github.event.inputs.limit }}
         
     - name: Log completion
-      run: echo "Synchronisation des factures fournisseur manquantes terminée."
+      run: echo "Synchronisation des factures manquantes terminée."
