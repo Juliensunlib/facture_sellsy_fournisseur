@@ -31,8 +31,10 @@ jobs:
     - name: Verify environment variables
       run: |
         echo "Vérification des variables d'environnement..."
-        if [ -z "${{ secrets.SELLSY_CLIENT_ID }}" ]; then echo "SELLSY_CLIENT_ID manquant"; fi
-        if [ -z "${{ secrets.SELLSY_CLIENT_SECRET }}" ]; then echo "SELLSY_CLIENT_SECRET manquant"; fi
+        if [ -z "${{ secrets.SELLSY_V1_CONSUMER_TOKEN }}" ]; then echo "SELLSY_V1_CONSUMER_TOKEN manquant"; fi
+        if [ -z "${{ secrets.SELLSY_V1_CONSUMER_SECRET }}" ]; then echo "SELLSY_V1_CONSUMER_SECRET manquant"; fi
+        if [ -z "${{ secrets.SELLSY_V1_USER_TOKEN }}" ]; then echo "SELLSY_V1_USER_TOKEN manquant"; fi
+        if [ -z "${{ secrets.SELLSY_V1_USER_SECRET }}" ]; then echo "SELLSY_V1_USER_SECRET manquant"; fi
         if [ -z "${{ secrets.AIRTABLE_API_KEY }}" ]; then echo "AIRTABLE_API_KEY manquant"; fi
         if [ -z "${{ secrets.AIRTABLE_BASE_ID }}" ]; then echo "AIRTABLE_BASE_ID manquant"; fi
         if [ -z "${{ secrets.AIRTABLE_TABLE_NAME }}" ]; then echo "AIRTABLE_TABLE_NAME manquant"; fi
@@ -40,13 +42,15 @@ jobs:
         
     - name: Sync missing invoices
       env:
-        SELLSY_CLIENT_ID: ${{ secrets.SELLSY_CLIENT_ID }}
-        SELLSY_CLIENT_SECRET: ${{ secrets.SELLSY_CLIENT_SECRET }}
-        SELLSY_API_URL: ${{ secrets.SELLSY_API_URL || 'https://api.sellsy.com/v2' }}
+        SELLSY_V1_CONSUMER_TOKEN: ${{ secrets.SELLSY_V1_CONSUMER_TOKEN }}
+        SELLSY_V1_CONSUMER_SECRET: ${{ secrets.SELLSY_V1_CONSUMER_SECRET }}
+        SELLSY_V1_USER_TOKEN: ${{ secrets.SELLSY_V1_USER_TOKEN }}
+        SELLSY_V1_USER_SECRET: ${{ secrets.SELLSY_V1_USER_SECRET }}
+        SELLSY_V1_API_URL: ${{ secrets.SELLSY_V1_API_URL || 'https://apifeed.sellsy.com/0' }}
         AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
         AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
         AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
-        AIRTABLE_SUPPLIER_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
+        AIRTABLE_SUPPLIER_TABLE_NAME: ${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}
       run: |
         echo "Variables d'environnement configurées."
         echo "Début de la synchronisation des factures manquantes..."
