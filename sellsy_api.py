@@ -93,7 +93,6 @@ class SellsySupplierAPI:
                             error_msg = data.get('error', 'Erreur inconnue')
                             logger.error(f"Erreur API Sellsy v1: {error_msg}")
 
-                            # Si le message d'erreur est une chaîne, on vérifie s'il contient 'rate limit'
                             if isinstance(error_msg, str) and 'rate limit' in error_msg.lower():
                                 logger.warning("Limite atteinte, nouvelle tentative après 60s")
                                 time.sleep(60)
@@ -146,7 +145,7 @@ class SellsySupplierAPI:
             "id": invoice_id
         }
 
-        return self._make_api_request("Accounting.getOne", params) or {}
+        return self._make_api_request("Purchase.getOne", params) or {}
 
     def sync_missing_supplier_invoices(self, limit: int = 1000) -> None:
         """
@@ -155,7 +154,7 @@ class SellsySupplierAPI:
         """
         logger.info("Début de la synchronisation des factures manquantes...")
         invoices = self.get_all_supplier_invoices(limit)
-        
+
         if invoices:
             for invoice in invoices:
                 invoice_id = invoice.get('id')
