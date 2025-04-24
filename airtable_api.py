@@ -5,6 +5,7 @@ import os
 import base64
 import logging
 import re
+import json
 from typing import Dict, Optional, Any, List, Union
 
 # Configuration du logging
@@ -34,15 +35,24 @@ class AirtableSupplierAPI:
         Returns:
             Dictionnaire formaté pour Airtable ou None en cas d'erreur
         """
+        # Log complet de la facture pour debug
+        logger.info(f"Traitement facture: {invoice.get('id', 'ID inconnu')}")
+        try:
+            # Afficher la structure complète de la facture pour debug
+            logger.debug(f"Structure complète reçue: {json.dumps(invoice, indent=2)}")
+        except:
+            logger.debug("Impossible de sérialiser la structure complète en JSON")
+            
         # Vérifications de sécurité
         if not invoice:
             logger.warning("Données de facture fournisseur invalides ou vides")
             return None
             
-        logger.debug(f"Structure de la facture fournisseur - Clés principales: {list(invoice.keys())}")
+        logger.info(f"Structure de la facture - Clés principales: {list(invoice.keys())}")
         
         # --- Récupération de l'ID de facture ---
         invoice_id = str(invoice.get("id", ""))
+        logger.info(f"ID Facture: {invoice_id}")
         
         # --- Récupération des informations fournisseur ---
         supplier_id = None
@@ -53,44 +63,59 @@ class AirtableSupplierAPI:
             relation = invoice["relation"]
             supplier_id = str(relation.get("id", ""))
             supplier_name = relation.get("name", "")
+            logger.info(f"Fournisseur trouvé via relation: {supplier_name} (ID: {supplier_id})")
         # Méthode 2: Structure avancée
         elif "related" in invoice and isinstance(invoice["related"], list):
             for related in invoice["related"]:
                 if related.get("type") in ["individual", "corporation"]:
                     supplier_id = str(related.get("id", ""))
                     supplier_name = related.get("name", "")
+                    logger.info(f"Fournisseur trouvé via related: {supplier_name} (ID: {supplier_id})")
                     break
         # Méthode 3: Structure plate
         elif "client" in invoice and isinstance(invoice["client"], dict):
             supplier_id = str(invoice["client"].get("id", ""))
             supplier_name = invoice["client"].get("name", "")
+            logger.info(f"Fournisseur trouvé via client: {supplier_name} (ID: {supplier_id})")
         # Méthode 4: Champs directs
         elif "clientid" in invoice:
             supplier_id = str(invoice.get("clientid", ""))
+            logger.info(f"ID fournisseur trouvé via clientid: {supplier_id}")
+        # Méthode 5: Third (spécifique API v1)
+        elif "third" in invoice and isinstance(invoice["third"], dict):
+            supplier_id = str(invoice["third"].get("id", ""))
+            supplier_name = invoice["third"].get("name", "")
+            logger.info(f"Fournisseur trouvé via third: {supplier_name} (ID: {supplier_id})")
         
-        # Méthode 5: Champs directs alternatifs
+        # Méthode 6: Champs directs alternatifs pour le nom
         if not supplier_name:
-            possible_name_fields = ["company_name", "supplier_name", "name", "clientname", "third_name"]
+            possible_name_fields = ["company_name", "supplier_name", "name", "clientname", "third_name", "thirdname"]
             for field in possible_name_fields:
                 if field in invoice and invoice[field]:
                     supplier_name = invoice[field]
+                    logger.info(f"Nom fournisseur trouvé via {field}: {supplier_name}")
                     break
         
         # Fallback pour le nom du fournisseur
         if not supplier_name and supplier_id:
             supplier_name = f"Fournisseur #{supplier_id}"
+            logger.info(f"Utilisation du nom par défaut: {supplier_name}")
         
         # --- Gestion de la date ---
         created_date = None
-        date_fields = ["created_at", "date", "created", "issueDate", "documentdate", "creationDate"]
+        date_fields = ["created_at", "date", "created", "issueDate", "documentdate", "creationDate", "displayedDate"]
+        date_field_used = None
         
         for field in date_fields:
             if field in invoice and invoice[field]:
                 created_date = invoice[field]
+                date_field_used = field
+                logger.info(f"Date trouvée via {field}: {created_date}")
                 break
         
         # Formatage de la date pour Airtable
         if created_date:
+            original_date = created_date
             # Conversion en format standard YYYY-MM-DD
             if isinstance(created_date, str):
                 # Si format ISO avec T
@@ -121,162 +146,245 @@ class AirtableSupplierAPI:
                             created_date = date_obj.strftime("%Y-%m-%d")
                         except ValueError:
                             try:
-                                # Format timestamp unix
-                                date_obj = datetime.datetime.fromtimestamp(float(created_date))
+                                # Format timestamp unix (en secondes ou millisecondes)
+                                if len(str(created_date)) > 10:  # Probablement en millisecondes
+                                    date_obj = datetime.datetime.fromtimestamp(float(created_date)/1000)
+                                else:
+                                    date_obj = datetime.datetime.fromtimestamp(float(created_date))
                                 created_date = date_obj.strftime("%Y-%m-%d")
                             except (ValueError, TypeError):
                                 # Si échec, utiliser la date actuelle
                                 logger.warning(f"Format de date invalide '{created_date}', utilisation de la date actuelle")
                                 created_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            logger.info(f"Date formatée: {created_date} (origine: {original_date} via {date_field_used})")
         else:
             # Date par défaut
             created_date = datetime.datetime.now().strftime("%Y-%m-%d")
             logger.warning(f"Date non trouvée pour la facture {invoice.get('id', 'inconnue')}, utilisation de la date actuelle")
         
+        # --- Récupération du numéro de facture ---
+        reference = ""
+        ref_field_used = None
+        ref_fields = ["reference", "number", "ident", "docnum", "docsNum", "docNumber", "invoiceNumber", "document_number", "displayedIdent", "note_number", "noteNumber", "file_name"]
+        
+        # Log des valeurs disponibles pour le numéro de facture
+        logger.info("Valeurs possibles pour le numéro de facture:")
+        for field in ref_fields:
+            if field in invoice:
+                logger.info(f"  - {field}: {invoice[field]}")
+        
+        # Essayer d'abord les champs directement liés au numéro de facture
+        for field in ref_fields:
+            if field in invoice and invoice[field]:
+                reference = str(invoice[field])
+                ref_field_used = field
+                logger.info(f"Numéro de facture trouvé via {field}: {reference}")
+                break
+                
+        # Si toujours vide, essayer d'extraire depuis les notes ou le corps du document
+        if not reference and "notes" in invoice and invoice["notes"]:
+            notes = str(invoice["notes"])
+            # Chercher un pattern de numéro de facture (ex: FA-2023-001, Facture N°2023-001, INV-123)
+            patterns = [
+                r'[A-Z]{1,3}[-\s]?\d{2,4}[-\s]?\d{1,6}',  # FA-2023-001
+                r'[Ff]acture\s+[Nn]°\s*\d{1,10}',         # Facture N°12345
+                r'[Ii][Nn][Vv][-\s]?\d{1,10}',            # INV-12345
+                r'[Nn]°\s*\d{1,10}'                       # N°12345
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, notes)
+                if match:
+                    reference = match.group(0)
+                    ref_field_used = "notes (pattern)"
+                    logger.info(f"Numéro extrait des notes via pattern: {reference}")
+                    break
+        
+        # Si toujours vide, utiliser l'ID comme fallback
+        if not reference and invoice_id:
+            reference = f"REF-{invoice_id}"
+            ref_field_used = "ID fallback"
+            logger.info(f"Utilisation de l'ID comme référence par défaut: {reference}")
+        
+        logger.info(f"Numéro final retenu: {reference} (source: {ref_field_used})")
+        
         # --- Récupération des montants ---
         montant_ht = 0.0
         montant_ttc = 0.0
+        ht_source = None
+        ttc_source = None
+        
+        # Loguer toutes les données liées aux montants pour analyse
+        logger.info("Valeurs disponibles pour les montants:")
+        for key, val in invoice.items():
+            if any(term in key.lower() for term in ["amount", "total", "price", "sum", "montant"]):
+                logger.info(f"  - {key}: {val}")
         
         # Méthode 1: Extraction structurée des montants depuis "amounts"
         if "amounts" in invoice and isinstance(invoice["amounts"], dict):
             amounts = invoice["amounts"]
+            logger.info(f"Structure amounts trouvée: {json.dumps(amounts, indent=2)}")
+            
             # Montant HT
-            ht_keys = ["total_excluding_tax", "totalAmountWithoutTaxes", "tax_excl", "total_excl_tax", "totalExclTax", "preTax", "totalHT"]
+            ht_keys = ["totalAmountWithoutVat", "total_excluding_tax", "totalAmountWithoutTaxes", "tax_excl", "total_excl_tax", "totalExclTax", "preTax", "totalHT", "baseHT"]
             for key in ht_keys:
                 if key in amounts and amounts[key] is not None:
                     montant_ht = self._safe_float_conversion(amounts[key])
+                    ht_source = f"amounts.{key}"
+                    logger.info(f"Montant HT trouvé via amounts.{key}: {montant_ht}")
                     break
             
             # Montant TTC
-            ttc_keys = ["total_including_tax", "totalAmountWithTaxes", "tax_incl", "total_incl_tax", "totalInclTax", "withTax", "totalTTC"]
+            ttc_keys = ["total_including_tax", "totalAmountWithTaxes", "tax_incl", "total_incl_tax", "totalInclTax", "withTax", "totalTTC", "total"]
             for key in ttc_keys:
                 if key in amounts and amounts[key] is not None:
                     montant_ttc = self._safe_float_conversion(amounts[key])
+                    ttc_source = f"amounts.{key}"
+                    logger.info(f"Montant TTC trouvé via amounts.{key}: {montant_ttc}")
                     break
         
         # Méthode 2: Structure "amount"
         if montant_ht == 0.0 or montant_ttc == 0.0:
             if "amount" in invoice and isinstance(invoice["amount"], dict):
                 amount = invoice["amount"]
+                logger.info(f"Structure amount trouvée: {json.dumps(amount, indent=2)}")
+                
                 if montant_ht == 0.0:
-                    ht_keys = ["tax_excl", "ht", "preTax", "withoutTax"]
+                    ht_keys = ["tax_excl", "ht", "preTax", "withoutTax", "baseHT", "totalHT"]
                     for key in ht_keys:
                         if key in amount and amount[key] is not None:
                             montant_ht = self._safe_float_conversion(amount[key])
+                            ht_source = f"amount.{key}"
+                            logger.info(f"Montant HT trouvé via amount.{key}: {montant_ht}")
                             break
                 
                 if montant_ttc == 0.0:
-                    ttc_keys = ["tax_incl", "ttc", "withTax", "total"]
+                    ttc_keys = ["tax_incl", "ttc", "withTax", "total", "totalTTC"]
                     for key in ttc_keys:
                         if key in amount and amount[key] is not None:
                             montant_ttc = self._safe_float_conversion(amount[key])
+                            ttc_source = f"amount.{key}"
+                            logger.info(f"Montant TTC trouvé via amount.{key}: {montant_ttc}")
                             break
         
         # Méthode 3: Champs directs en racine
-        direct_ht_fields = ["total_amount_without_taxes", "totalht", "amountHT", "totalHT", "preTaxAmount"]
-        direct_ttc_fields = ["total_amount_with_taxes", "totalttc", "amountTTC", "totalTTC", "totalAmount"]
+        direct_ht_fields = ["total_amount_without_taxes", "totalht", "amountHT", "totalHT", "preTaxAmount", "baseHT", "pretaxAmount", "amount_without_taxes"]
+        direct_ttc_fields = ["total_amount_with_taxes", "totalttc", "amountTTC", "totalTTC", "totalAmount", "amount_with_taxes", "finalAmount"]
         
         if montant_ht == 0.0:
             for field in direct_ht_fields:
                 if field in invoice and invoice[field] is not None:
                     montant_ht = self._safe_float_conversion(invoice[field])
+                    ht_source = field
+                    logger.info(f"Montant HT trouvé via champ direct {field}: {montant_ht}")
                     break
                     
         if montant_ttc == 0.0:
             for field in direct_ttc_fields:
                 if field in invoice and invoice[field] is not None:
                     montant_ttc = self._safe_float_conversion(invoice[field])
+                    ttc_source = field
+                    logger.info(f"Montant TTC trouvé via champ direct {field}: {montant_ttc}")
                     break
         
         # Méthode 4: Calcul à partir des lignes de facture (si disponibles)
         if (montant_ht == 0.0 or montant_ttc == 0.0) and "rows" in invoice and isinstance(invoice["rows"], list):
+            logger.info(f"Calcul des montants à partir des lignes ({len(invoice['rows'])} lignes)")
             ht_total = 0.0
-            for row in invoice["rows"]:
+            for i, row in enumerate(invoice["rows"]):
                 if isinstance(row, dict):
+                    # Afficher le détail de chaque ligne pour debug
+                    logger.info(f"Ligne {i+1}: {json.dumps(row, indent=2)}")
+                    
                     # Essayer différentes structures pour les lignes
                     row_amount = 0.0
                     # Structure 1: montant unitaire * quantité
                     if "unit_amount" in row and "qty" in row:
                         row_amount = self._safe_float_conversion(row["unit_amount"]) * self._safe_float_conversion(row["qty"])
+                        logger.info(f"  -> Montant calculé avec unit_amount * qty: {row_amount}")
                     # Structure 2: total direct
                     elif "total" in row:
                         row_amount = self._safe_float_conversion(row["total"])
+                        logger.info(f"  -> Montant direct depuis total: {row_amount}")
                     # Structure 3: autre format
                     elif "unitAmount" in row and "quantity" in row:
                         row_amount = self._safe_float_conversion(row["unitAmount"]) * self._safe_float_conversion(row["quantity"])
+                        logger.info(f"  -> Montant calculé avec unitAmount * quantity: {row_amount}")
+                    # Structure 4: totalAmount
+                    elif "totalAmount" in row:
+                        row_amount = self._safe_float_conversion(row["totalAmount"])
+                        logger.info(f"  -> Montant direct depuis totalAmount: {row_amount}")
                     
                     ht_total += row_amount
             
             if montant_ht == 0.0 and ht_total > 0:
                 montant_ht = ht_total
-                logger.debug(f"Montant HT calculé à partir des lignes: {montant_ht}")
+                ht_source = "somme des lignes"
+                logger.info(f"Montant HT calculé à partir des lignes: {montant_ht}")
             
             # Si TVA disponible, calculer le TTC
-            if montant_ttc == 0.0 and "tax_rate" in invoice:
-                tax_rate = self._safe_float_conversion(invoice["tax_rate"])
-                if tax_rate > 0:
-                    montant_ttc = montant_ht * (1 + (tax_rate / 100))
-                    logger.debug(f"Montant TTC calculé avec TVA {tax_rate}%: {montant_ttc}")
+            tax_rate = None
+            tax_rate_field = None
+            
+            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate"]:
+                if field in invoice and invoice[field] is not None:
+                    tax_rate = self._safe_float_conversion(invoice[field])
+                    tax_rate_field = field
+                    break
+            
+            if montant_ttc == 0.0 and tax_rate is not None and tax_rate > 0:
+                montant_ttc = montant_ht * (1 + (tax_rate / 100))
+                ttc_source = f"calculé avec TVA {tax_rate}% ({tax_rate_field})"
+                logger.info(f"Montant TTC calculé avec TVA {tax_rate}%: {montant_ttc}")
         
         # Si on a uniquement le TTC, essayer de déduire le HT avec le taux par défaut
         if montant_ttc > 0 and montant_ht == 0.0:
             # Taux de TVA standard en France (20%)
             default_tax_rate = 20.0
-            if "tax_rate" in invoice:
-                default_tax_rate = self._safe_float_conversion(invoice["tax_rate"])
+            
+            # Chercher un taux de TVA explicite
+            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate"]:
+                if field in invoice and invoice[field] is not None:
+                    default_tax_rate = self._safe_float_conversion(invoice[field])
+                    logger.info(f"Taux TVA trouvé via {field}: {default_tax_rate}%")
+                    break
             
             montant_ht = montant_ttc / (1 + (default_tax_rate / 100))
-            logger.debug(f"Montant HT déduit du TTC avec TVA {default_tax_rate}%: {montant_ht}")
+            ht_source = f"déduit du TTC avec TVA {default_tax_rate}%"
+            logger.info(f"Montant HT déduit du TTC avec TVA {default_tax_rate}%: {montant_ht}")
         
         # Si on a uniquement le HT, calculer le TTC avec le taux standard
         if montant_ht > 0 and montant_ttc == 0.0:
             # Taux de TVA standard en France (20%)
             default_tax_rate = 20.0
-            if "tax_rate" in invoice:
-                default_tax_rate = self._safe_float_conversion(invoice["tax_rate"])
+            
+            # Chercher un taux de TVA explicite
+            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate"]:
+                if field in invoice and invoice[field] is not None:
+                    default_tax_rate = self._safe_float_conversion(invoice[field])
+                    logger.info(f"Taux TVA trouvé via {field}: {default_tax_rate}%")
+                    break
             
             montant_ttc = montant_ht * (1 + (default_tax_rate / 100))
-            logger.debug(f"Montant TTC calculé à partir du HT avec TVA {default_tax_rate}%: {montant_ttc}")
+            ttc_source = f"calculé avec TVA {default_tax_rate}%"
+            logger.info(f"Montant TTC calculé à partir du HT avec TVA {default_tax_rate}%: {montant_ttc}")
         
         # Arrondir les montants à 2 décimales pour éviter les problèmes d'affichage
         montant_ht = round(montant_ht, 2)
         montant_ttc = round(montant_ttc, 2)
         
-        # --- Récupération du numéro de facture ---
-        reference = ""
-        ref_fields = ["reference", "number", "decimal_number", "invoiceNumber", "document_number", "docNumber", "notes"]
+        logger.info(f"Montants finaux: HT={montant_ht} ({ht_source}), TTC={montant_ttc} ({ttc_source})")
         
-        for field in ref_fields:
-            if field in invoice and invoice[field]:
-                reference = str(invoice[field])
-                # Si c'est le champ notes, extraire uniquement la partie numérique
-                if field == "notes" and len(reference) > 20:
-                    # Chercher un pattern de numéro de facture (ex: FA-2023-001)
-                    match = re.search(r'[A-Z]{1,3}[-\s]?\d{2,4}[-\s]?\d{1,6}', reference)
-                    if match:
-                        reference = match.group(0)
-                    else:
-                        # Si trop long et pas de pattern trouvé, ne pas utiliser les notes
-                        reference = ""
-                        continue
-                break
-            
-        # Si toujours vide, essayer d'autres champs ou utiliser l'ID comme fallback
-        if not reference:
-            if "ident" in invoice:
-                reference = str(invoice["ident"])
-            elif "docnum" in invoice:
-                reference = str(invoice["docnum"])
-            elif invoice_id:
-                reference = f"REF-{invoice_id}"
-            
-        # --- Récupération du statut et autres informations ---
+        # --- Récupération du statut ---
         status = ""
-        status_fields = ["status", "doc_status", "state", "documentStatus"]
+        status_field_used = None
+        status_fields = ["status", "doc_status", "state", "documentStatus", "step"]
         
         for field in status_fields:
             if field in invoice and invoice[field]:
                 status = str(invoice[field])
+                status_field_used = field
+                logger.info(f"Statut trouvé via {field}: {status}")
                 break
         
         # Mapper les codes statut vers des libellés explicites
@@ -293,19 +401,33 @@ class AirtableSupplierAPI:
         }
         
         # Appliquer le mapping si disponible, sinon garder le statut d'origine
+        original_status = status
         status = status_mapping.get(status.lower(), status)
         
         # Si statut toujours vide, définir un statut par défaut
         if not status:
             status = "Non spécifié"
+            logger.warning(f"Statut non trouvé, utilisation par défaut: {status}")
+        else:
+            logger.info(f"Statut final: {status} (origine: {original_status} via {status_field_used})")
         
-        # Récupération du lien PDF et URL web
+        # --- Récupération du lien PDF et URL web ---
         pdf_link = ""
-        pdf_fields = ["pdf_link", "pdfUrl", "pdf_url", "downloadUrl"]
+        pdf_link_field = None
+        pdf_fields = ["pdf_link", "pdfUrl", "pdf_url", "downloadUrl", "public_link", "pdf", "document_link"]
+        
         for field in pdf_fields:
             if field in invoice and invoice[field]:
                 pdf_link = invoice[field]
+                pdf_link_field = field
+                logger.info(f"Lien PDF trouvé via {field}: {pdf_link}")
                 break
+            
+        # Construction de l'URL web Sellsy avec l'ID
+        web_url = ""
+        if invoice_id:
+            web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
+            logger.info(f"URL Sellsy construite: {web_url}")
         
         # Construction du résultat final
         result = {
@@ -317,14 +439,16 @@ class AirtableSupplierAPI:
             "Montant_HT": montant_ht,
             "Montant_TTC": montant_ttc,
             "Statut": status,
-            "URL": f"https://go.sellsy.com/purchase/{invoice_id}" if invoice_id else ""
+            "URL": web_url
         }
         
         # Ajouter le lien direct vers le PDF si disponible
         if pdf_link:
             result["PDF_URL"] = pdf_link
+            logger.info(f"PDF_URL ajouté: {pdf_link} (source: {pdf_link_field})")
         
-        logger.debug(f"Facture {invoice_id} formatée avec succès: HT={montant_ht}, TTC={montant_ttc}")
+        logger.info(f"Facture {invoice_id} formatée avec succès")
+        logger.info(f"Résultat formaté: {json.dumps(result, indent=2)}")
         return result
 
     def _safe_float_conversion(self, value: Any) -> float:
@@ -335,13 +459,16 @@ class AirtableSupplierAPI:
             # Si la valeur est une chaîne avec des caractères non numériques (sauf point décimal)
             if isinstance(value, str):
                 # Supprimer les caractères non numériques sauf le point décimal
-                value = re.sub(r'[^\d.]', '', value)
+                clean_value = re.sub(r'[^\d.]', '', value)
                 # Si chaîne vide après nettoyage
-                if not value:
+                if not clean_value:
+                    logger.warning(f"Conversion en float - chaîne nettoyée vide: '{value}' -> ''")
                     return 0.0
+                logger.debug(f"Conversion en float: '{value}' -> '{clean_value}'")
+                return float(clean_value)
             return float(value)
-        except (ValueError, TypeError):
-            logger.warning(f"Impossible de convertir '{value}' en float, utilisation de 0.0")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Impossible de convertir '{value}' en float: {e}")
             return 0.0
 
     def find_supplier_invoice_by_id(self, sellsy_id: str) -> Optional[Dict]:
@@ -433,7 +560,7 @@ class AirtableSupplierAPI:
             # Traitement du PDF si disponible
             if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                 logger.info(f"Ajout du PDF pour la facture {sellsy_id}: {pdf_path}")
-                
+
                 pdf_base64 = self.encode_file_to_base64(pdf_path)
                 if pdf_base64:
                     airtable_data["PDF"] = [
@@ -444,7 +571,7 @@ class AirtableSupplierAPI:
                     ]
                 else:
                     logger.warning(f"Impossible d'encoder le PDF pour la facture {sellsy_id}")
-            
+
             # Recherche d'un enregistrement existant
             existing_record = self.find_supplier_invoice_by_id(sellsy_id)
 
@@ -483,10 +610,10 @@ def sync_supplier_invoices_to_airtable(sellsy_api_client):
         # Traitement des factures
         for idx, invoice in enumerate(invoices):
             logger.info(f"Traitement de la facture {idx+1}/{len(invoices)}")
-            
+
             # Formatage pour Airtable
             formatted_invoice = airtable_api.format_supplier_invoice_for_airtable(invoice)
-            
+
             if formatted_invoice:
                 # Téléchargement du PDF
                 pdf_path = None
@@ -495,7 +622,7 @@ def sync_supplier_invoices_to_airtable(sellsy_api_client):
                         pdf_path = sellsy_api_client.download_supplier_invoice_pdf(invoice['id'])
                     except Exception as e:
                         logger.warning(f"Impossible de télécharger le PDF pour la facture {invoice['id']}: {e}")
-                
+
                 # Insertion ou mise à jour
                 airtable_id = airtable_api.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
                 if airtable_id:
