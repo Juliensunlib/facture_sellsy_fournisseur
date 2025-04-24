@@ -1,0 +1,54 @@
+name: Sync Missing Supplier Invoices
+
+on:
+  # Permettre l'exécution manuelle depuis l'interface GitHub
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Nombre maximum de factures fournisseur à vérifier'
+        required: false
+        default: '1000'
+        type: string
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Verify environment variables
+      run: |
+        echo "Vérification des variables d'environnement..."
+        if [ -z "${{ secrets.SELLSY_CLIENT_ID }}" ]; then echo "SELLSY_CLIENT_ID manquant"; fi
+        if [ -z "${{ secrets.SELLSY_CLIENT_SECRET }}" ]; then echo "SELLSY_CLIENT_SECRET manquant"; fi
+        if [ -z "${{ secrets.AIRTABLE_API_KEY }}" ]; then echo "AIRTABLE_API_KEY manquant"; fi
+        if [ -z "${{ secrets.AIRTABLE_BASE_ID }}" ]; then echo "AIRTABLE_BASE_ID manquant"; fi
+        if [ -z "${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}" ]; then echo "AIRTABLE_SUPPLIER_TABLE_NAME manquant"; fi
+        
+    - name: Sync missing supplier invoices
+      env:
+        SELLSY_CLIENT_ID: ${{ secrets.SELLSY_CLIENT_ID }}
+        SELLSY_CLIENT_SECRET: ${{ secrets.SELLSY_CLIENT_SECRET }}
+        SELLSY_API_URL: ${{ secrets.SELLSY_API_URL || 'https://api.sellsy.com/v2' }}
+        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+        AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}
+      run: |
+        echo "Variables d'environnement configurées."
+        echo "Début de la synchronisation des factures fournisseur manquantes..."
+        python main.py sync-missing-supplier --limit ${{ github.event.inputs.limit }}
+        
+    - name: Log completion
+      run: echo "Synchronisation des factures fournisseur manquantes terminée."
