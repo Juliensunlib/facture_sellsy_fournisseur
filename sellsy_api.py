@@ -146,7 +146,6 @@ class SellsySupplierAPI:
             "id": invoice_id
         }
 
-        # Remplacer la méthode 'Accounting.get' par 'Accounting.getOne'
         return self._make_api_request("Accounting.getOne", params) or {}
 
     def sync_missing_supplier_invoices(self, limit: int = 1000) -> None:
@@ -161,7 +160,6 @@ class SellsySupplierAPI:
             for invoice in invoices:
                 invoice_id = invoice.get('id')
                 if invoice_id:
-                    # Récupérer les détails de la facture
                     details = self.get_supplier_invoice_details(invoice_id)
                     logger.info(f"Détails de la facture {invoice_id}: {details}")
                     pdf_url = details.get('pdf_url')
@@ -175,7 +173,7 @@ class SellsySupplierAPI:
         try:
             logger.info(f"Téléchargement de la facture {invoice_id} depuis {pdf_url}")
             response = requests.get(pdf_url, stream=True)
-            response.raise_for_status()  # Vérifie si la requête est réussie
+            response.raise_for_status()
 
             pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
             with open(pdf_path, 'wb') as pdf_file:
