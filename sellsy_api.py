@@ -205,25 +205,43 @@ class SellsySupplierAPI:
         
         return results
 
-    def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
-        """
-        Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
-        Utilise la méthode Purchase.getList qui est plus appropriée pour les factures fournisseurs.
-        """
-        logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
+   def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
+    """
+    Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
+    Utilise correctement la méthode Supplier.getList selon la documentation.
+    """
+    logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
 
-        # CORRECTION: Utilisation de Purchase.getList au lieu de Accounting.getList
+    # Utilisation de Supplier.getList comme indiqué dans la documentation
+    params = {
+        "pagination": {
+            "nbperpage": limit,
+            "pagenum": 1
+        },
+        "search": {
+            "doctype": "invoice"  # Pour les factures
+        }
+    }
+
+    result = self._make_api_request("Supplier.getList", params)
+    
+    # Si la première méthode ne fonctionne pas, essayer une alternative
+    if not result or not isinstance(result, dict) or len(result) == 0:
+        logger.warning("Méthode Supplier.getList infructueuse, essai avec une méthode alternative")
+        
+        # Alternative avec Purchase.getList (déjà dans votre code)
         params = {
             "pagination": {
                 "nbperpage": limit,
                 "pagenum": 1
             },
             "search": {
-                "doctype": "supplierinvoice"  # Filtre pour les factures fournisseurs
+                "doctype": "supplierinvoice"
             }
         }
-
         result = self._make_api_request("Purchase.getList", params)
+    
+    return invoices
         
         # Si la première méthode ne fonctionne pas, essayer une alternative
         if not result or not isinstance(result, dict) or len(result) == 0:
