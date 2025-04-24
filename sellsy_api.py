@@ -1,12 +1,24 @@
 import requests
 import json
 import time
-import base64
 import os
 import logging
+import hashlib
+import random
+import string
+import hmac
+import base64
+import urllib.parse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Union
-from config import SELLSY_CLIENT_ID, SELLSY_CLIENT_SECRET, SELLSY_API_URL, PDF_STORAGE_DIR
+from config import (
+    SELLSY_V1_CONSUMER_TOKEN, 
+    SELLSY_V1_CONSUMER_SECRET, 
+    SELLSY_V1_USER_TOKEN, 
+    SELLSY_V1_USER_SECRET,
+    SELLSY_V1_API_URL, 
+    PDF_STORAGE_DIR
+)
 
 # Configuration du logging
 logging.basicConfig(
@@ -17,75 +29,138 @@ logger = logging.getLogger("sellsy_api")
 
 class SellsySupplierAPI:
     def __init__(self):
-        """Initialisation de l'API Sellsy pour les factures fournisseurs"""
-        self.access_token = None
-        self.token_expires_at = 0
-        self.api_url = SELLSY_API_URL
-        logger.info(f"Initialisation de l'API Sellsy: {self.api_url}")
+        """Initialisation de l'API Sellsy v1 pour les factures fournisseurs"""
+        self.api_url = SELLSY_V1_API_URL
+        logger.info(f"Initialisation de l'API Sellsy v1: {self.api_url}")
         
         # Vérification des identifiants
-        if not SELLSY_CLIENT_ID or not SELLSY_CLIENT_SECRET:
-            logger.error("Identifiants Sellsy manquants dans les variables d'environnement")
-            raise ValueError("Identifiants Sellsy manquants")
+        if not all([SELLSY_V1_CONSUMER_TOKEN, SELLSY_V1_CONSUMER_SECRET, 
+                   SELLSY_V1_USER_TOKEN, SELLSY_V1_USER_SECRET]):
+            logger.error("Identifiants Sellsy v1 manquants dans les variables d'environnement")
+            raise ValueError("Identifiants Sellsy v1 manquants")
         
         # Création du répertoire de stockage des PDF
         if not os.path.exists(PDF_STORAGE_DIR):
             os.makedirs(PDF_STORAGE_DIR)
             logger.info(f"Répertoire de stockage des PDF créé: {PDF_STORAGE_DIR}")
 
-    def get_access_token(self) -> str:
+    def _generate_oauth_signature(self, method: str, request_params: Dict) -> Dict:
         """
-        Obtient ou renouvelle le token d'accès Sellsy
+        Génère les en-têtes OAuth 1.0a pour l'API Sellsy v1
         
+        Args:
+            method: Méthode d'API Sellsy (ex: 'PurchaseOrder.getList')
+            request_params: Paramètres de la requête
+            
         Returns:
-            Token d'accès valide
+            En-têtes OAuth complets pour l'authentification
         """
-        current_time = time.time()
+        # Création d'un nonce aléatoire
+        nonce = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
+        timestamp = str(int(time.time()))
         
-        # Utiliser le token existant s'il est encore valide
-        if self.access_token and current_time < self.token_expires_at - 60:
-            return self.access_token
-        
-        # Sinon, demander un nouveau token
-        url = "https://login.sellsy.com/oauth2/access-tokens"
-        
-        # Authentification avec les identifiants client en Base64
-        auth_string = f"{SELLSY_CLIENT_ID}:{SELLSY_CLIENT_SECRET}"
-        auth_bytes = auth_string.encode('ascii')
-        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
-        
-        headers = {
-            "Authorization": f"Basic {auth_b64}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json"
+        # Construction des paramètres OAuth
+        oauth_params = {
+            'oauth_consumer_key': SELLSY_V1_CONSUMER_TOKEN,
+            'oauth_token': SELLSY_V1_USER_TOKEN,
+            'oauth_signature_method': 'PLAINTEXT',
+            'oauth_timestamp': timestamp,
+            'oauth_nonce': nonce,
+            'oauth_version': '1.0',
+            'oauth_signature': f"{SELLSY_V1_CONSUMER_SECRET}&{SELLSY_V1_USER_SECRET}"
         }
         
-        data = "grant_type=client_credentials"
+        # Construction des paramètres de la requête
+        request = {
+            'request': 1,
+            'io_mode': 'json',
+            'do_in': json.dumps({
+                'method': method,
+                'params': request_params
+            })
+        }
         
-        logger.info(f"Demande de token d'accès Sellsy")
+        return {'oauth_params': oauth_params, 'request': request}
+
+    def _make_api_request(self, method: str, params: Dict = None, retry: int = 3) -> Optional[Dict]:
+        """
+        Effectue une requête à l'API Sellsy v1
         
-        try:
-            response = requests.post(url, headers=headers, data=data, timeout=30)
-            status_code = response.status_code
-            logger.debug(f"Statut de la réponse: {status_code}")
+        Args:
+            method: Méthode d'API Sellsy (ex: 'PurchaseOrder.getList')
+            params: Paramètres de la requête
+            retry: Nombre de tentatives en cas d'échec
             
-            if status_code == 200:
-                try:
-                    token_data = response.json()
-                    self.access_token = token_data["access_token"]
-                    self.token_expires_at = current_time + token_data["expires_in"]
-                    logger.info("Token d'accès obtenu avec succès")
-                    return self.access_token
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.error(f"Erreur de décodage JSON ou données manquantes: {e}")
-                    raise Exception("Réponse de l'API Sellsy invalide")
-            else:
-                logger.error(f"Erreur d'authentification Sellsy: Code {status_code}")
-                logger.debug(f"Réponse complète: {response.text[:200]}...")
-                raise Exception(f"Échec de l'authentification Sellsy (code {status_code})")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Erreur de connexion à l'API Sellsy: {e}")
-            raise Exception(f"Impossible de se connecter à l'API Sellsy")
+        Returns:
+            Réponse de l'API ou None en cas d'échec
+        """
+        if params is None:
+            params = {}
+        
+        # Génération des paramètres OAuth
+        auth_data = self._generate_oauth_signature(method, params)
+        oauth_params = auth_data['oauth_params']
+        request_params = auth_data['request']
+        
+        # Construction des en-têtes
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
+        }
+        
+        # Tentatives de requête avec gestion des erreurs
+        for attempt in range(retry):
+            try:
+                response = requests.post(
+                    self.api_url,
+                    headers=headers,
+                    data=request_params,
+                    params=oauth_params,
+                    timeout=30
+                )
+                
+                # Vérification du code de statut
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        
+                        # Dans l'API v1, les réponses d'erreur ont un status 
+                        if isinstance(data, dict) and data.get('status') == 'error':
+                            error_msg = data.get('error', 'Erreur inconnue')
+                            logger.error(f"Erreur API Sellsy v1: {error_msg}")
+                            
+                            # Gestion des erreurs de rate limiting
+                            if 'rate limit' in error_msg.lower():
+                                wait_time = 60
+                                logger.warning(f"Limitation de débit, attente de {wait_time} secondes...")
+                                time.sleep(wait_time)
+                                continue
+                                
+                            return None
+                        
+                        return data.get('response', data)
+                        
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Erreur de décodage JSON: {e}")
+                        if attempt < retry - 1:
+                            time.sleep(5)
+                        else:
+                            return None
+                else:
+                    logger.error(f"Erreur HTTP {response.status_code}: {response.text[:200]}...")
+                    if attempt < retry - 1:
+                        time.sleep(5)
+                    else:
+                        return None
+                        
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Exception lors de la requête: {e}")
+                if attempt < retry - 1:
+                    time.sleep(5)
+                else:
+                    return None
+        
+        return None
 
     def get_supplier_invoices(self, days: int = 365) -> List[Dict]:
         """
@@ -103,43 +178,30 @@ class SellsySupplierAPI:
         
         logger.info(f"Récupération des factures fournisseur du {start_date} au {end_date}")
         
-        # Utiliser la méthode générique avec filtre de date
         return self.get_all_supplier_invoices(
-            limit=10000,
-            created_after=f"{start_date}T00:00:00Z",
-            created_before=f"{end_date}T23:59:59Z"
+            filters={
+                'dateFrom': f"{start_date} 00:00:00",
+                'dateTo': f"{end_date} 23:59:59"
+            }
         )
 
-    def get_all_supplier_invoices(self, limit: int = 10000, **filters) -> List[Dict]:
+    def get_all_supplier_invoices(self, limit: int = 10000, filters: Dict = None) -> List[Dict]:
         """
         Récupère toutes les factures fournisseur avec pagination
         
         Args:
             limit: Nombre maximum de factures à récupérer
-            **filters: Filtres additionnels pour l'API
-                - created_after: Date de début (format ISO)
-                - created_before: Date de fin (format ISO)
-                - status: Statut des factures
+            filters: Filtres additionnels pour l'API
                 
         Returns:
             Liste des factures fournisseur
         """
-        # Configuration
-        token = self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
+        if filters is None:
+            filters = {}
         
         all_invoices = []
         current_page = 1
         page_size = 100
-        
-        # Paramètres de gestion des erreurs
-        max_retries = 5
-        retry_delay = 5
-        page_delay = 1
         
         logger.info(f"Récupération de toutes les factures fournisseur (limite: {limit})")
         if filters:
@@ -147,94 +209,52 @@ class SellsySupplierAPI:
         
         # Boucle de pagination
         while len(all_invoices) < limit:
-            # Paramètres de requête
+            # Paramètres de requête pour l'API v1
             params = {
-                "limit": page_size,
-                "offset": (current_page - 1) * page_size,
-                "order": "created",
-                "direction": "desc"
+                'pagination': {
+                    'nbperpage': page_size,
+                    'pagenum': current_page
+                },
+                'search': filters
             }
             
-            # Ajout des filtres
-            params.update(filters)
+            logger.info(f"Récupération de la page {current_page}")
             
-            # URL pour les factures fournisseur
-            url = f"{self.api_url}/purchases/invoices"
-            logger.info(f"Récupération de la page {current_page} (offset {params['offset']})")
+            # Requête à l'API v1
+            response_data = self._make_api_request('PurchaseOrder.getList', params)
             
-            # Gestion des tentatives
-            retry_count = 0
-            success = False
-            
-            while retry_count < max_retries and not success:
-                try:
-                    response = requests.get(url, headers=headers, params=params, timeout=30)
-                    status_code = response.status_code
-                    
-                    if status_code == 200:
-                        # Traitement des données
-                        response_data = response.json()
-                        page_invoices = response_data.get("data", [])
-                        
-                        # Si la page est vide, on a fini
-                        if not page_invoices:
-                            logger.info("Page vide reçue, fin de la pagination")
-                            return all_invoices[:limit]
-                            
-                        # Nombre de factures restantes à récupérer
-                        remaining = limit - len(all_invoices)
-                        invoices_to_add = page_invoices[:remaining]
-                        all_invoices.extend(invoices_to_add)
-                        
-                        logger.info(f"Page {current_page}: {len(invoices_to_add)} factures récupérées (total: {len(all_invoices)}/{limit})")
-                        
-                        # Vérifier si on doit continuer
-                        if len(all_invoices) >= limit or len(page_invoices) < page_size:
-                            return all_invoices[:limit]
-                        
-                        # Passer à la page suivante
-                        current_page += 1
-                        success = True
-                        
-                        # Pause entre les pages
-                        time.sleep(page_delay)
-                        
-                    elif status_code == 401:
-                        # Token expiré
-                        logger.warning("Token expiré, renouvellement...")
-                        self.token_expires_at = 0
-                        token = self.get_access_token()
-                        headers["Authorization"] = f"Bearer {token}"
-                        retry_count += 1
-                    
-                    elif status_code == 429:
-                        # Rate limiting
-                        wait_time = int(response.headers.get('Retry-After', 30))
-                        logger.warning(f"Limitation de débit (429), attente de {wait_time} secondes...")
-                        time.sleep(wait_time)
-                        retry_count += 1
-                    
-                    else:
-                        # Autres erreurs
-                        logger.error(f"Erreur API (page {current_page}): {status_code} - {response.text[:200]}...")
-                        retry_count += 1
-                        
-                        if retry_count >= max_retries:
-                            logger.error(f"Nombre maximum de tentatives atteint pour la page {current_page}")
-                        else:
-                            time.sleep(retry_delay)
+            if not response_data:
+                logger.error(f"Échec de récupération de la page {current_page}")
+                break
                 
-                except Exception as e:
-                    logger.error(f"Exception lors de la récupération de la page {current_page}: {e}")
-                    retry_count += 1
-                    
-                    if retry_count < max_retries:
-                        time.sleep(retry_delay)
+            # Extraction des factures
+            page_invoices = []
+            if isinstance(response_data, dict) and 'result' in response_data:
+                for invoice_id, invoice_data in response_data['result'].items():
+                    if invoice_id.isdigit():  # Ignorer les métadonnées
+                        page_invoices.append(invoice_data)
             
-            # Si toutes les tentatives ont échoué
-            if not success:
-                logger.warning(f"Échec de récupération de la page {current_page}, retour des données partielles")
-                return all_invoices[:limit]
+            # Si la page est vide, on a fini
+            if not page_invoices:
+                logger.info("Page vide reçue, fin de la pagination")
+                break
+                
+            # Nombre de factures restantes à récupérer
+            remaining = limit - len(all_invoices)
+            invoices_to_add = page_invoices[:remaining]
+            all_invoices.extend(invoices_to_add)
+            
+            logger.info(f"Page {current_page}: {len(invoices_to_add)} factures récupérées (total: {len(all_invoices)}/{limit})")
+            
+            # Vérifier si on doit continuer
+            if len(all_invoices) >= limit or len(page_invoices) < page_size:
+                break
+            
+            # Passer à la page suivante
+            current_page += 1
+            
+            # Pause entre les pages
+            time.sleep(1)
     
         return all_invoices[:limit]
 
@@ -253,59 +273,23 @@ class SellsySupplierAPI:
             return None
             
         invoice_id = str(invoice_id)
-        token = self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json"
+        
+        params = {
+            'docid': invoice_id
         }
         
-        url = f"{self.api_url}/purchases/invoices/{invoice_id}"
         logger.info(f"Récupération des détails de la facture fournisseur {invoice_id}")
         
-        max_retries = 3
-        retry_count = 0
+        # Requête à l'API v1
+        response_data = self._make_api_request('PurchaseOrder.getOne', params)
         
-        while retry_count < max_retries:
-            try:
-                response = requests.get(url, headers=headers, timeout=30)
-                status_code = response.status_code
-                
-                if status_code == 200:
-                    data = response.json()
-                    # Vérifier le format de la réponse
-                    if "data" in data:
-                        logger.info(f"Détails de la facture fournisseur {invoice_id} récupérés")
-                        return data.get("data", {})
-                    else:
-                        logger.info(f"Détails de la facture fournisseur {invoice_id} récupérés (format direct)")
-                        return data
-                
-                elif status_code == 401:
-                    # Renouveler le token
-                    logger.warning("Token expiré, renouvellement...")
-                    self.token_expires_at = 0
-                    token = self.get_access_token()
-                    headers["Authorization"] = f"Bearer {token}"
-                    retry_count += 1
-                
-                elif status_code == 404:
-                    logger.warning(f"Facture fournisseur {invoice_id} non trouvée (404)")
-                    return None
-                
-                else:
-                    logger.error(f"Erreur {status_code}: {response.text[:200]}...")
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        time.sleep(5)
-            
-            except Exception as e:
-                logger.error(f"Exception lors de la récupération des détails: {e}")
-                retry_count += 1
-                if retry_count < max_retries:
-                    time.sleep(5)
-        
-        logger.error(f"Échec après {max_retries} tentatives pour la facture {invoice_id}")
-        return None
+        if response_data:
+            # Dans l'API v1, les détails sont directement dans la réponse
+            logger.info(f"Détails de la facture fournisseur {invoice_id} récupérés")
+            return response_data
+        else:
+            logger.error(f"Échec de récupération des détails pour la facture {invoice_id}")
+            return None
     
     def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
         """
@@ -334,92 +318,55 @@ class SellsySupplierAPI:
         elif os.path.exists(pdf_path):
             logger.warning(f"PDF existant mais potentiellement corrompu, retéléchargement...")
         
-        # Récupérer les détails pour obtenir le lien PDF
-        invoice_details = self.get_supplier_invoice_details(invoice_id)
-        if not invoice_details:
-            logger.error(f"Impossible de récupérer les détails pour télécharger le PDF")
-            return None
+        # Paramètres de requête pour l'API v1
+        params = {
+            'docid': invoice_id,
+            'doctype': 'purchaseorder'  # Type pour les factures fournisseurs dans l'API v1
+        }
         
-        # Extraire le lien PDF direct si disponible
-        pdf_link = invoice_details.get("pdf_link")
+        logger.info(f"Téléchargement du PDF pour la facture fournisseur {invoice_id}")
         
-        # Définir les méthodes de téléchargement à essayer
-        methods = [
-            {
-                "name": "Lien direct",
-                "url": pdf_link,
-                "headers": {
-                    "Authorization": f"Bearer {self.get_access_token()}",
-                    "Accept": "application/pdf"
-                },
-                "skip_if_none": True
-            },
-            {
-                "name": "API standard",
-                "url": f"{self.api_url}/purchases/invoices/{invoice_id}/document",
-                "headers": {
-                    "Authorization": f"Bearer {self.get_access_token()}",
-                    "Accept": "application/pdf"
-                },
-                "skip_if_none": False
-            }
-        ]
+        # Générer les paramètres OAuth pour une requête de document
+        auth_data = self._generate_oauth_signature('Document.getFile', params)
+        oauth_params = auth_data['oauth_params']
+        request_params = auth_data['request']
         
-        # Essayer chaque méthode
-        for method in methods:
-           # Vérifier si cette méthode doit être ignorée
-            if method["skip_if_none"] and not method["url"]:
-                logger.debug(f"Méthode '{method['name']}' ignorée car URL non disponible")
-                continue
-                
-            url = method["url"]
-            headers = method["headers"]
+        # Construction de l'URL avec les paramètres OAuth
+        oauth_query = '&'.join([f"{k}={urllib.parse.quote(v)}" for k, v in oauth_params.items()])
+        request_query = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in request_params.items()])
+        pdf_url = f"{self.api_url}?{oauth_query}&{request_query}"
+        
+        try:
+            response = requests.get(pdf_url, timeout=60)
             
-            logger.info(f"Téléchargement PDF par méthode '{method['name']}': {url}")
-            
-            try:
-                response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+            if response.status_code == 200 and response.headers.get('Content-Type', '').startswith('application/pdf'):
+                # Écriture du fichier PDF
+                with open(pdf_path, 'wb') as f:
+                    f.write(response.content)
                 
-                if response.status_code == 200 and response.headers.get('Content-Type', '').startswith('application/pdf'):
-                    # Écriture du fichier PDF
-                    with open(pdf_path, 'wb') as f:
-                        f.write(response.content)
-                    
-                    # Vérification de la taille du fichier
-                    file_size = os.path.getsize(pdf_path)
-                    if file_size > 1000:  # Au moins 1KB
-                        logger.info(f"PDF téléchargé avec succès ({file_size} octets): {pdf_path}")
-                        return pdf_path
-                    else:
-                        logger.warning(f"PDF téléchargé mais trop petit ({file_size} octets), considéré comme invalide")
-                        os.remove(pdf_path)  # Supprimer le fichier invalide
-                
-                elif response.status_code == 401:
-                    # Renouveler le token et réessayer
-                    logger.warning("Token expiré pendant le téléchargement, renouvellement...")
-                    self.token_expires_at = 0
-                    headers["Authorization"] = f"Bearer {self.get_access_token()}"
-                    
-                    # Réessayer immédiatement avec le nouveau token
-                    retry_response = requests.get(url, headers=headers, timeout=30)
-                    if retry_response.status_code == 200:
-                        with open(pdf_path, 'wb') as f:
-                            f.write(retry_response.content)
-                        
-                        file_size = os.path.getsize(pdf_path)
-                        if file_size > 1000:
-                            logger.info(f"PDF téléchargé avec succès après renouvellement de token ({file_size} octets)")
-                            return pdf_path
-                
+                # Vérification de la taille du fichier
+                file_size = os.path.getsize(pdf_path)
+                if file_size > 1000:  # Au moins 1KB
+                    logger.info(f"PDF téléchargé avec succès ({file_size} octets): {pdf_path}")
+                    return pdf_path
                 else:
-                    logger.warning(f"Échec du téléchargement par méthode '{method['name']}': {response.status_code}")
-            
-            except Exception as e:
-                logger.error(f"Exception lors du téléchargement par méthode '{method['name']}': {e}")
-        
-        # Si toutes les méthodes ont échoué
-        logger.error(f"Échec du téléchargement du PDF pour la facture {invoice_id}")
-        return None
+                    logger.warning(f"PDF téléchargé mais trop petit ({file_size} octets), considéré comme invalide")
+                    os.remove(pdf_path)  # Supprimer le fichier invalide
+                    return None
+            else:
+                logger.error(f"Échec du téléchargement du PDF: {response.status_code}")
+                # On peut essayer de récupérer le message d'erreur si la réponse est en JSON
+                try:
+                    error_data = response.json()
+                    if isinstance(error_data, dict) and 'error' in error_data:
+                        logger.error(f"Erreur API: {error_data['error']}")
+                except:
+                    logger.error(f"Réponse non-PDF: {response.text[:200]}...")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Exception lors du téléchargement du PDF: {e}")
+            return None
 
     def search_supplier_invoices(self, query: str, limit: int = 100) -> List[Dict]:
         """
@@ -436,36 +383,15 @@ class SellsySupplierAPI:
             logger.warning("Terme de recherche trop court ou vide")
             return []
             
-        token = self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        
-        url = f"{self.api_url}/purchases/invoices/search"
-        params = {
-            "limit": limit,
-            "offset": 0,
-            "search": query.strip()
+        # Dans l'API v1, la recherche se fait via le paramètre search
+        filters = {
+            'keywords': query.strip()
         }
         
         logger.info(f"Recherche de factures fournisseur avec le terme '{query}'")
         
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                results = data.get("data", [])
-                logger.info(f"Recherche réussie: {len(results)} résultat(s) trouvé(s)")
-                return results
-            else:
-                logger.error(f"Erreur lors de la recherche: {response.status_code} - {response.text[:200]}...")
-                return []
-        except Exception as e:
-            logger.error(f"Exception lors de la recherche: {e}")
-            return []
+        # Utiliser la méthode existante avec les filtres de recherche
+        return self.get_all_supplier_invoices(limit=limit, filters=filters)
 
     def create_supplier_credit_note(self, invoice_id: str, credit_data: Dict) -> Optional[str]:
         """
@@ -483,47 +409,41 @@ class SellsySupplierAPI:
             logger.error("ID de facture ou données d'avoir manquantes")
             return None
             
-        token = self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
+        # Construction des données pour l'API v1
+        params = {
+            'docid': str(invoice_id),
+            'doctype': 'purchaseorder',
+            'note': credit_data.get('note', 'Avoir automatique')
         }
         
-        url = f"{self.api_url}/purchases/creditNotes"
+        # Ajouter les items si présents
+        if 'items' in credit_data and credit_data['items']:
+            params['items'] = credit_data['items']
         
-        # Construction minimale des données
-        payload = {
-            "purchase_invoice_id": str(invoice_id),
-            "note": credit_data.get("note", "Avoir automatique"),
-            "currency_id": credit_data.get("currency_id", "EUR"),
-            "items": credit_data.get("items", [])
-        }
-        
-        # Ajout des champs optionnels
-        if "date" in credit_data:
-            payload["date"] = credit_data["date"]
+        # Ajouter la date si présente
+        if 'date' in credit_data:
+            params['date'] = credit_data['date']
         
         logger.info(f"Création d'un avoir pour la facture fournisseur {invoice_id}")
         
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
+        # Requête à l'API v1
+        response_data = self._make_api_request('PurchaseOrder.createCredit', params)
+        
+        if response_data:
+            # Récupérer l'ID de l'avoir créé
+            credit_note_id = None
             
-            if response.status_code in [200, 201]:
-                data = response.json()
-                credit_note_id = data.get("id", data.get("data", {}).get("id"))
-                
-                if credit_note_id:
-                    logger.info(f"Avoir créé avec succès: {credit_note_id}")
-                    return credit_note_id
-                else:
-                    logger.error("Impossible d'extraire l'ID de l'avoir créé")
-                    return None
+            if isinstance(response_data, dict):
+                credit_note_id = response_data.get('credit_docid')
+            
+            if credit_note_id:
+                logger.info(f"Avoir créé avec succès: {credit_note_id}")
+                return str(credit_note_id)
             else:
-                logger.error(f"Erreur lors de la création de l'avoir: {response.status_code} - {response.text[:200]}")
+                logger.error("Impossible d'extraire l'ID de l'avoir créé")
                 return None
-        except Exception as e:
-            logger.error(f"Exception lors de la création de l'avoir: {e}")
+        else:
+            logger.error("Échec de la création de l'avoir")
             return None
 
     def get_all_suppliers(self, limit: int = 1000) -> List[Dict]:
@@ -536,64 +456,61 @@ class SellsySupplierAPI:
         Returns:
             Liste des fournisseurs
         """
-        token = self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json"
-        }
-        
         all_suppliers = []
         current_page = 1
         page_size = 100
         
         logger.info(f"Récupération de la liste des fournisseurs (limite: {limit})")
         
+        # Boucle de pagination
         while len(all_suppliers) < limit:
+            # Paramètres de requête pour l'API v1
             params = {
-                "limit": page_size,
-                "offset": (current_page - 1) * page_size,
-                "order": "name",
-                "relations": "supplier"  # Filtrer uniquement les fournisseurs
+                'pagination': {
+                    'nbperpage': page_size,
+                    'pagenum': current_page
+                },
+                'search': {
+                    'types': ['supplier']  # Filtrer uniquement les fournisseurs
+                }
             }
             
-            url = f"{self.api_url}/companies"
+            logger.info(f"Récupération de la page {current_page} des fournisseurs")
             
-            try:
-                response = requests.get(url, headers=headers, params=params, timeout=30)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    suppliers = data.get("data", [])
-                    
-                    if not suppliers:
-                        logger.info("Fin de la pagination des fournisseurs")
-                        break
-                        
-                    # Filtrer pour ne garder que les fournisseurs valides
-                    page_suppliers = [s for s in suppliers if s.get("relation_types", {}).get("supplier", False)]
-                    all_suppliers.extend(page_suppliers[:limit - len(all_suppliers)])
-                    
-                    logger.info(f"Page {current_page}: {len(page_suppliers)} fournisseurs récupérés (total: {len(all_suppliers)})")
-                    
-                    if len(all_suppliers) >= limit or len(suppliers) < page_size:
-                        break
-                        
-                    current_page += 1
-                    time.sleep(1)  # Pause pour éviter la limitation de débit
-                    
-                elif response.status_code == 401:
-                    # Renouveler le token
-                    logger.warning("Token expiré, renouvellement...")
-                    self.token_expires_at = 0
-                    token = self.get_access_token()
-                    headers["Authorization"] = f"Bearer {token}"
-                    
-                else:
-                    logger.error(f"Erreur lors de la récupération des fournisseurs: {response.status_code}")
-                    break
-                    
-            except Exception as e:
-                logger.error(f"Exception lors de la récupération des fournisseurs: {e}")
+            # Requête à l'API v1
+            response_data = self._make_api_request('Client.getList', params)
+            
+            if not response_data:
+                logger.error(f"Échec de récupération de la page {current_page} des fournisseurs")
                 break
                 
+            # Extraction des fournisseurs
+            page_suppliers = []
+            if isinstance(response_data, dict) and 'result' in response_data:
+                for supplier_id, supplier_data in response_data['result'].items():
+                    if supplier_id.isdigit():  # Ignorer les métadonnées
+                        page_suppliers.append(supplier_data)
+            
+            # Si la page est vide, on a fini
+            if not page_suppliers:
+                logger.info("Page vide reçue, fin de la pagination")
+                break
+                
+            # Nombre de fournisseurs restants à récupérer
+            remaining = limit - len(all_suppliers)
+            suppliers_to_add = page_suppliers[:remaining]
+            all_suppliers.extend(suppliers_to_add)
+            
+            logger.info(f"Page {current_page}: {len(suppliers_to_add)} fournisseurs récupérés (total: {len(all_suppliers)}/{limit})")
+            
+            # Vérifier si on doit continuer
+            if len(all_suppliers) >= limit or len(page_suppliers) < page_size:
+                break
+            
+            # Passer à la page suivante
+            current_page += 1
+            
+            # Pause entre les pages
+            time.sleep(1)
+    
         return all_suppliers[:limit]
