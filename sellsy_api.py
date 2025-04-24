@@ -5,8 +5,6 @@ import os
 import logging
 import random
 import string
-import urllib.parse
-from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from config import (
     SELLSY_V1_CONSUMER_TOKEN,
@@ -124,7 +122,6 @@ class SellsySupplierAPI:
         logger.info("Test de connexion à l'API Sellsy v1")
         try:
             # Appel à une méthode simple pour tester la connexion
-            # Utiliser une méthode qui renvoie peu de données
             result = self._make_api_request("Infos.getInfos", {})
             
             # Si on obtient un résultat, la connexion est établie
@@ -170,7 +167,12 @@ class SellsySupplierAPI:
             "id": invoice_id
         }
 
-        return self._make_api_request("Purchase.getOne", params) or {}
+        invoice_details = self._make_api_request("Purchase.getOne", params) or {}
+        logger.info(f"Détails de la facture {invoice_id}: {invoice_details}")
+
+        # Lister tous les champs présents dans la réponse
+        logger.info(f"Champs disponibles dans la réponse : {invoice_details.keys()}")
+        return invoice_details
 
     def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
         """
@@ -233,39 +235,14 @@ class SellsySupplierAPI:
             logger.error(f"Erreur inattendue lors du téléchargement du PDF: {e}")
             return None
 
-    def sync_missing_supplier_invoices(self, limit: int = 1000) -> None:
-        """
-        Synchronise les factures manquantes en récupérant toutes les factures fournisseurs
-        et en les sauvegardant dans un répertoire local.
-        """
-        logger.info("Début de la synchronisation des factures manquantes...")
-        invoices = self.get_all_supplier_invoices(limit)
-
-        if invoices:
-            for invoice in invoices:
-                invoice_id = invoice.get('id')
-                if invoice_id:
-                    details = self.get_supplier_invoice_details(invoice_id)
-                    logger.info(f"Détails de la facture {invoice_id}: {details}")
-                    pdf_url = details.get('pdf_url')
-                    if pdf_url:
-                        self.download_pdf(invoice_id, pdf_url)
-
-    def download_pdf(self, invoice_id: str, pdf_url: str) -> None:
-        """
-        Télécharge le PDF de la facture et l'enregistre dans le répertoire spécifié.
-        """
-        try:
-            logger.info(f"Téléchargement de la facture {invoice_id} depuis {pdf_url}")
-            response = requests.get(pdf_url, stream=True)
-            response.raise_for_status()
-
-            pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
-            with open(pdf_path, 'wb') as pdf_file:
-                for chunk in response.iter_content(chunk_size=8192):
-                    pdf_file.write(chunk)
-
-            logger.info(f"Facture {invoice_id} téléchargée et sauvegardée à {pdf_path}")
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Erreur lors du téléchargement du PDF pour la facture {invoice_id}: {e}")
+# Exemple d'utilisation
+if __name__ == "__main__":
+    sellsy_api = SellsySupplierAPI()
+    if sellsy_api.test_connection():
+        invoices = sellsy_api.get_all_supplier_invoices()
+        for invoice in invoices:
+            invoice_id = invoice.get('id')
+            if invoice_id:
+                details = sellsy_api.get_supplier_invoice_details(invoice_id)
+                logger.info(f"Facture {invoice_id} - Détails: {details}")
+                sellsy_api.download_supplier_invoice_pdf(invoice_id)
