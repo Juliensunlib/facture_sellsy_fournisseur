@@ -136,29 +136,42 @@ class SellsySupplierAPI:
             logger.error(f"❌ Erreur lors du test de connexion à l'API Sellsy v1: {e}")
             return False
 
-    def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
-        """
-        Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
-        """
-        logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
+   def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
+    """
+    Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
+    """
+    logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
 
-        params = {
-            "filters": {
-                "documentType": "supplierinvoice"
-            },
-            "pagination": {
-                "pagenum": 1,
-                "pagesize": limit
-            }
+    params = {
+        "filters": {
+            "documentType": "supplierinvoice"
+        },
+        "pagination": {
+            "pagenum": 1,
+            "pagesize": limit
         }
+    }
 
-        result = self._make_api_request("Accounting.getList", params)
-        if isinstance(result, dict):
-            invoices = list(result.values())
-            normalized_invoices = [self.normalize_invoice_data(invoice) for invoice in invoices]
-            return normalized_invoices
-        return []
-
+    result = self._make_api_request("Accounting.getList", params)
+    
+    # AJOUTEZ CE CODE ICI - Début
+    # Sauvegarde de la liste brute pour debug
+    try:
+        debug_dir = "debug_json"
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_file = os.path.join(debug_dir, "all_invoices_raw.json")
+        with open(debug_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+        logger.info(f"Liste brute des factures sauvegardée dans {debug_file}")
+    except Exception as e:
+        logger.error(f"Impossible de sauvegarder la liste brute: {e}")
+    # AJOUTEZ CE CODE ICI - Fin
+    
+    if isinstance(result, dict):
+        invoices = list(result.values())
+        normalized_invoices = [self.normalize_invoice_data(invoice) for invoice in invoices]
+        return normalized_invoices
+    return []
     def get_nested_value(self, data: Dict, key_path: str, default: Any = None) -> Any:
         """
         Récupère une valeur imbriquée dans un dictionnaire en utilisant un chemin avec des points.
@@ -355,28 +368,41 @@ class SellsySupplierAPI:
         return normalized_data
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Dict:
-        """
-        Récupère les détails d'une facture spécifique par son ID.
-        """
-        logger.info(f"🔍 Récupération des détails de la facture {invoice_id}")
+    """
+    Récupère les détails d'une facture spécifique par son ID.
+    """
+    logger.info(f"🔍 Récupération des détails de la facture {invoice_id}")
 
-        params = {
-            "id": invoice_id
-        }
+    params = {
+        "id": invoice_id
+    }
 
-        raw_invoice_details = self._make_api_request("Purchase.getOne", params) or {}
-        
-        # Logs pour le debugging
-        logger.debug(f"Champs disponibles dans la réponse brute: {raw_invoice_details.keys()}")
-        
-        # Normalisation des données pour Airtable
-        normalized_data = self.normalize_invoice_data(raw_invoice_details)
-        
-        # Log des données normalisées (limité pour éviter les logs trop longs)
-        logger.info(f"Facture {invoice_id} normalisée avec {len(normalized_data)} champs")
-        logger.debug(f"Échantillon des champs normalisés: {list(normalized_data.keys())[:10]}")
-        
-        return normalized_data
+    raw_invoice_details = self._make_api_request("Purchase.getOne", params) or {}
+    
+    # AJOUTEZ CE CODE ICI - Début
+    # Sauvegarde de la réponse brute pour debug
+    try:
+        debug_dir = "debug_json"
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_file = os.path.join(debug_dir, f"invoice_{invoice_id}_raw.json")
+        with open(debug_file, 'w', encoding='utf-8') as f:
+            json.dump(raw_invoice_details, f, indent=2, ensure_ascii=False)
+        logger.info(f"Réponse brute sauvegardée dans {debug_file}")
+    except Exception as e:
+        logger.error(f"Impossible de sauvegarder la réponse brute: {e}")
+    # AJOUTEZ CE CODE ICI - Fin
+    
+    # Logs pour le debugging
+    logger.debug(f"Champs disponibles dans la réponse brute: {raw_invoice_details.keys()}")
+    
+    # Normalisation des données pour Airtable
+    normalized_data = self.normalize_invoice_data(raw_invoice_details)
+    
+    # Log des données normalisées (limité pour éviter les logs trop longs)
+    logger.info(f"Facture {invoice_id} normalisée avec {len(normalized_data)} champs")
+    logger.debug(f"Échantillon des champs normalisés: {list(normalized_data.keys())[:10]}")
+    
+    return normalized_data
 
     def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
         """
