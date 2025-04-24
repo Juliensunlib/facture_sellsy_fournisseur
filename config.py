@@ -4,16 +4,12 @@ from dotenv import load_dotenv
 # Charger les variables d'environnement à partir du fichier .env si disponible
 load_dotenv()
 
-# Configuration Sellsy v2
-SELLSY_CLIENT_ID = os.getenv("SELLSY_CLIENT_ID")
-SELLSY_CLIENT_SECRET = os.getenv("SELLSY_CLIENT_SECRET")
-SELLSY_API_URL = os.getenv("SELLSY_API_URL", "https://api.sellsy.com/v2")
-
 # Configuration Sellsy v1 (OAuth 1.0a)
 SELLSY_V1_CONSUMER_TOKEN = os.getenv("SELLSY_V1_CONSUMER_TOKEN")
 SELLSY_V1_CONSUMER_SECRET = os.getenv("SELLSY_V1_CONSUMER_SECRET")
 SELLSY_V1_USER_TOKEN = os.getenv("SELLSY_V1_USER_TOKEN")
 SELLSY_V1_USER_SECRET = os.getenv("SELLSY_V1_USER_SECRET")
+SELLSY_V1_API_URL = os.getenv("SELLSY_V1_API_URL", "https://apifeed.sellsy.com/0")
 
 # Configuration Airtable
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
@@ -26,8 +22,6 @@ PDF_STORAGE_DIR = os.getenv("PDF_STORAGE_DIR", "pdf_invoices_suppliers")
 
 # Vérification des variables requises
 required_vars = {
-    "SELLSY_CLIENT_ID": SELLSY_CLIENT_ID,
-    "SELLSY_CLIENT_SECRET": SELLSY_CLIENT_SECRET,
     "SELLSY_V1_CONSUMER_TOKEN": SELLSY_V1_CONSUMER_TOKEN,
     "SELLSY_V1_CONSUMER_SECRET": SELLSY_V1_CONSUMER_SECRET,
     "SELLSY_V1_USER_TOKEN": SELLSY_V1_USER_TOKEN,
