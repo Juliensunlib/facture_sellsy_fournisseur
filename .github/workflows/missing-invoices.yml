@@ -39,18 +39,18 @@ jobs:
         if [ -z "${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}" ]; then echo "AIRTABLE_SUPPLIER_TABLE_NAME manquant"; fi
         
     - name: Sync missing invoices
-  env:
-    SELLSY_CLIENT_ID: ${{ secrets.SELLSY_CLIENT_ID }}
-    SELLSY_CLIENT_SECRET: ${{ secrets.SELLSY_CLIENT_SECRET }}
-    SELLSY_API_URL: ${{ secrets.SELLSY_API_URL || 'https://api.sellsy.com/v2' }}
-    AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
-    AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-    AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
-    AIRTABLE_SUPPLIER_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
-  run: |
-    echo "Variables d'environnement configurées."
-    echo "Début de la synchronisation des factures manquantes..."
-    python main.py sync-missing-supplier --limit ${{ github.event.inputs.limit }}
+      env:
+        SELLSY_CLIENT_ID: ${{ secrets.SELLSY_CLIENT_ID }}
+        SELLSY_CLIENT_SECRET: ${{ secrets.SELLSY_CLIENT_SECRET }}
+        SELLSY_API_URL: ${{ secrets.SELLSY_API_URL || 'https://api.sellsy.com/v2' }}
+        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+        AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
+        AIRTABLE_SUPPLIER_TABLE_NAME: ${{ secrets.AIRTABLE_TABLE_NAME }}
+      run: |
+        echo "Variables d'environnement configurées."
+        echo "Début de la synchronisation des factures manquantes..."
+        python main.py sync-missing-supplier --limit ${{ github.event.inputs.limit }}
         
     - name: Log completion
       run: echo "Synchronisation des factures manquantes terminée."
