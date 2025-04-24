@@ -114,6 +114,31 @@ class SellsySupplierAPI:
 
         return None
 
+    def test_connection(self) -> bool:
+        """
+        Teste la connexion à l'API Sellsy
+        
+        Returns:
+            True si la connexion est établie avec succès, False sinon
+        """
+        logger.info("Test de connexion à l'API Sellsy v1")
+        try:
+            # Appel à une méthode simple pour tester la connexion
+            # Utiliser une méthode qui renvoie peu de données
+            result = self._make_api_request("Infos.getInfos", {})
+            
+            # Si on obtient un résultat, la connexion est établie
+            if result is not None:
+                logger.info("✅ Connexion à l'API Sellsy v1 établie avec succès")
+                return True
+            else:
+                logger.warning("⚠️ Échec de la connexion à l'API Sellsy v1")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur lors du test de connexion à l'API Sellsy v1: {e}")
+            return False
+
     def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
         """
         Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
@@ -146,6 +171,67 @@ class SellsySupplierAPI:
         }
 
         return self._make_api_request("Purchase.getOne", params) or {}
+
+    def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
+        """
+        Télécharge le PDF d'une facture fournisseur et le stocke localement.
+        
+        Args:
+            invoice_id: ID de la facture fournisseur
+            
+        Returns:
+            Chemin du fichier PDF téléchargé ou None en cas d'erreur
+        """
+        logger.info(f"Téléchargement du PDF pour la facture fournisseur {invoice_id}")
+        
+        try:
+            # Récupérer les détails de la facture pour obtenir l'URL du PDF
+            invoice_details = self.get_supplier_invoice_details(invoice_id)
+            
+            if not invoice_details:
+                logger.warning(f"Détails de la facture {invoice_id} non trouvés")
+                return None
+            
+            # Chercher l'URL du PDF dans différents champs possibles
+            pdf_url = None
+            pdf_fields = ["pdf_url", "pdfUrl", "pdf_link", "downloadUrl", "public_link", "pdf"]
+            
+            for field in pdf_fields:
+                if field in invoice_details and invoice_details[field]:
+                    pdf_url = invoice_details[field]
+                    logger.info(f"URL PDF trouvée via champ {field}: {pdf_url}")
+                    break
+            
+            if not pdf_url:
+                logger.warning(f"URL PDF non trouvée pour la facture {invoice_id}")
+                return None
+            
+            # Créer le chemin de destination
+            pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
+            
+            # Télécharger le PDF
+            response = requests.get(pdf_url, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            # Vérifier que c'est bien un PDF
+            content_type = response.headers.get('Content-Type', '')
+            if 'application/pdf' not in content_type and not pdf_url.endswith('.pdf'):
+                logger.warning(f"Le contenu téléchargé ne semble pas être un PDF: {content_type}")
+            
+            # Sauvegarder le fichier
+            with open(pdf_path, 'wb') as pdf_file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    pdf_file.write(chunk)
+            
+            logger.info(f"PDF téléchargé et sauvegardé: {pdf_path}")
+            return pdf_path
+        
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erreur lors du téléchargement du PDF: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur inattendue lors du téléchargement du PDF: {e}")
+            return None
 
     def sync_missing_supplier_invoices(self, limit: int = 1000) -> None:
         """
