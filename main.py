@@ -133,6 +133,86 @@ def run_full_sync():
     except Exception as e:
         logger.error(f"Erreur lors de la synchronisation complète: {e}")
 
+def sync_missing_supplier_invoices(limit=1000):
+    """
+    Synchronise les factures fournisseur manquantes dans Airtable
+    
+    Args:
+        limit: Nombre maximum de factures à vérifier (défaut: 1000)
+    """
+    if not CONFIG_VALID:
+        logger.error("Configuration invalide, vérifiez vos variables d'environnement")
+        return
+        
+    limit = int(limit)
+    logger.info(f"🔍 Recherche des factures fournisseur manquantes (limite: {limit})...")
+    
+    try:
+        sellsy = SellsySupplierAPI()
+        airtable = AirtableSupplierAPI()
+        
+        # Récupération des factures fournisseur récentes
+        invoices = sellsy.get_all_supplier_invoices(limit=limit)
+        
+        if not invoices:
+            logger.warning("Aucune facture fournisseur trouvée dans Sellsy")
+            return
+            
+        logger.info(f"{len(invoices)} factures trouvées dans Sellsy. Vérification des manquantes...")
+        
+        missing_count = 0
+        sync_count = 0
+        
+        for idx, invoice in enumerate(invoices):
+            invoice_id = str(invoice.get("id", ""))
+            if not invoice_id:
+                continue
+                
+            # Vérification si la facture existe dans Airtable
+            existing = airtable.find_supplier_invoice_by_id(invoice_id)
+            
+            if not existing:
+                missing_count += 1
+                logger.info(f"📝 Facture manquante trouvée: {invoice_id} ({missing_count} au total)")
+                
+                # Récupération des détails complets
+                details = sellsy.get_supplier_invoice_details(invoice_id)
+                source_data = details if details else invoice
+                
+                # Formatage et insertion
+                formatted_invoice = airtable.format_supplier_invoice_for_airtable(source_data)
+                
+                if formatted_invoice:
+                    # Téléchargement du PDF
+                    pdf_path = None
+                    try:
+                        pdf_path = sellsy.download_supplier_invoice_pdf(invoice_id)
+                    except Exception as e:
+                        logger.warning(f"Erreur lors du téléchargement du PDF: {e}")
+                        
+                    # Insertion dans Airtable
+                    result = airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
+                    
+                    if result:
+                        sync_count += 1
+                        logger.info(f"✅ Facture {invoice_id} ajoutée à Airtable (ID: {result})")
+                    else:
+                        logger.warning(f"⚠️ Échec de l'insertion pour {invoice_id}")
+            
+            # Affichage du progrès
+            if (idx + 1) % 50 == 0:
+                logger.info(f"Progression: {idx + 1}/{len(invoices)} factures vérifiées")
+            
+            # Pause toutes les 10 factures manquantes pour éviter de surcharger les APIs
+            if missing_count > 0 and missing_count % 10 == 0:
+                logger.info("⏸️ Pause de 2s pour éviter la saturation des APIs...")
+                time.sleep(2)
+        
+        logger.info(f"🎉 Vérification terminée: {missing_count} factures manquantes trouvées, {sync_count} synchronisées avec succès")
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de la synchronisation des factures manquantes: {e}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Synchronisation Sellsy -> Airtable")
     subparsers = parser.add_subparsers(dest="command")
@@ -150,6 +230,10 @@ if __name__ == "__main__":
     webhook_parser = subparsers.add_parser("webhook", help="Démarrer le serveur webhook")
     webhook_parser.add_argument("--host", type=str, default="0.0.0.0", help="Adresse IP d'écoute")
     webhook_parser.add_argument("--port", type=int, default=8000, help="Port d'écoute")
+    
+    # Commande sync-missing-supplier
+    missing_parser = subparsers.add_parser("sync-missing-supplier", help="Synchroniser les factures fournisseur manquantes")
+    missing_parser.add_argument("--limit", type=int, default=1000, help="Nombre maximum de factures à vérifier")
 
     # Analyse des arguments
     args = parser.parse_args()
@@ -166,5 +250,7 @@ if __name__ == "__main__":
         run_full_sync()
     elif args.command == "webhook":
         start_webhook_server(args.host, args.port)
+    elif args.command == "sync-missing-supplier":
+        sync_missing_supplier_invoices(args.limit)
     else:
         parser.print_help()
