@@ -41,7 +41,7 @@ jobs:
       env:
         SELLSY_CLIENT_ID: ${{ secrets.SELLSY_CLIENT_ID }}
         SELLSY_CLIENT_SECRET: ${{ secrets.SELLSY_CLIENT_SECRET }}
-        SELLSY_API_URL: ${{ secrets.SELLSY_API_URL || 'https://api.sellsy.com/v2' }}
+        SELLSY_API_URL: ${{ secrets.SELLSY_API_URL | default('https://api.sellsy.com/v2') }}
         AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
         AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
         AIRTABLE_TABLE_NAME: ${{ secrets.AIRTABLE_SUPPLIER_TABLE_NAME }}
