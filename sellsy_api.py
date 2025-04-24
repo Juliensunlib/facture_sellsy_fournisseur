@@ -15,12 +15,23 @@ from config import (
     PDF_STORAGE_DIR
 )
 
-# Configuration du logging
+# Configuration du logging avec un format amélioré
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("sellsy_api")
+
+# Fonction utilitaire pour afficher du JSON formaté dans les logs
+def log_json(data, label="JSON", level=logging.INFO):
+    """Affiche un dict/liste sous forme de JSON formaté dans les logs"""
+    json_str = json.dumps(data, indent=2, ensure_ascii=False)
+    
+    # Séparer les lignes et les logger individuellement pour une meilleure lisibilité
+    logger.log(level, f"=== DÉBUT {label} ===")
+    for line in json_str.split('\n'):
+        logger.log(level, line)
+    logger.log(level, f"=== FIN {label} ===")
 
 class SellsySupplierAPI:
     def __init__(self):
@@ -72,6 +83,10 @@ class SellsySupplierAPI:
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json'
         }
+        
+        # Log des paramètres de requête
+        logger.debug(f"Requête API: {method}")
+        logger.debug(f"Paramètres: {params}")
 
         for attempt in range(retry):
             try:
@@ -98,18 +113,25 @@ class SellsySupplierAPI:
 
                             return None
 
+                        # Log de la réponse en JSON formaté
+                        if logger.isEnabledFor(logging.DEBUG):
+                            log_json(data, f"Réponse API {method}", logging.DEBUG)
+                            
                         return data.get('response', data)
 
                     except json.JSONDecodeError as e:
                         logger.error(f"Erreur JSON: {e}")
+                        logger.error(f"Contenu brut de la réponse: {response.text[:500]}...")
                 else:
                     logger.error(f"Erreur HTTP {response.status_code}: {response.text[:200]}")
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Exception: {e}")
 
+            logger.info(f"Tentative {attempt+1}/{retry} échouée, nouvelle tentative dans 5s")
             time.sleep(5)
 
+        logger.error(f"Échec après {retry} tentatives pour la méthode {method}")
         return None
 
     def test_connection(self) -> bool:
@@ -127,6 +149,9 @@ class SellsySupplierAPI:
             # Si on obtient un résultat, la connexion est établie
             if result is not None:
                 logger.info("✅ Connexion à l'API Sellsy v1 établie avec succès")
+                # Afficher les infos basiques du résultat
+                if isinstance(result, dict) and result:
+                    log_json(result, "Infos API Sellsy")
                 return True
             else:
                 logger.warning("⚠️ Échec de la connexion à l'API Sellsy v1")
@@ -136,41 +161,47 @@ class SellsySupplierAPI:
             logger.error(f"❌ Erreur lors du test de connexion à l'API Sellsy v1: {e}")
             return False
 
-   def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
+    def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
         """
         Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
         """
         logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
 
-    params = {
-        "filters": {
-            "documentType": "supplierinvoice"
-        },
-        "pagination": {
-            "pagenum": 1,
-            "pagesize": limit
+        params = {
+            "filters": {
+                "documentType": "supplierinvoice"
+            },
+            "pagination": {
+                "pagenum": 1,
+                "pagesize": limit
+            }
         }
-    }
 
-    result = self._make_api_request("Accounting.getList", params)
-    
-    # AJOUTEZ CE CODE ICI - Début
-    # Sauvegarde de la liste brute pour debug
-    try:
-        debug_dir = "debug_json"
-        os.makedirs(debug_dir, exist_ok=True)
-        debug_file = os.path.join(debug_dir, "all_invoices_raw.json")
-        with open(debug_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-        logger.info(f"Liste brute des factures sauvegardée dans {debug_file}")
-    except Exception as e:
-        logger.error(f"Impossible de sauvegarder la liste brute: {e}")
-    
-    if isinstance(result, dict):
-        invoices = list(result.values())
-        normalized_invoices = [self.normalize_invoice_data(invoice) for invoice in invoices]
-        return normalized_invoices
-    return []
+        result = self._make_api_request("Accounting.getList", params)
+        
+        # Journalisation de la liste brute des factures
+        log_json(result, "Liste brute des factures fournisseurs")
+        
+        # Sauvegarde également dans un fichier pour consultation ultérieure
+        try:
+            debug_dir = "debug_json"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, "all_invoices_raw.json")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            logger.info(f"Liste brute des factures sauvegardée dans {debug_file}")
+        except Exception as e:
+            logger.error(f"Impossible de sauvegarder la liste brute: {e}")
+        
+        if isinstance(result, dict):
+            invoices = list(result.values())
+            normalized_invoices = [self.normalize_invoice_data(invoice) for invoice in invoices]
+            logger.info(f"Nombre de factures récupérées: {len(normalized_invoices)}")
+            return normalized_invoices
+        
+        logger.warning("Aucune facture trouvée ou format de réponse inattendu")
+        return []
+
     def get_nested_value(self, data: Dict, key_path: str, default: Any = None) -> Any:
         """
         Récupère une valeur imbriquée dans un dictionnaire en utilisant un chemin avec des points.
@@ -367,41 +398,44 @@ class SellsySupplierAPI:
         return normalized_data
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Dict:
-    """
-    Récupère les détails d'une facture spécifique par son ID.
-    """
-    logger.info(f"🔍 Récupération des détails de la facture {invoice_id}")
+        """
+        Récupère les détails d'une facture spécifique par son ID.
+        """
+        logger.info(f"🔍 Récupération des détails de la facture {invoice_id}")
 
-    params = {
-        "id": invoice_id
-    }
+        params = {
+            "id": invoice_id
+        }
 
-    raw_invoice_details = self._make_api_request("Purchase.getOne", params) or {}
-    
-    # AJOUTEZ CE CODE ICI - Début
-    # Sauvegarde de la réponse brute pour debug
-    try:
-        debug_dir = "debug_json"
-        os.makedirs(debug_dir, exist_ok=True)
-        debug_file = os.path.join(debug_dir, f"invoice_{invoice_id}_raw.json")
-        with open(debug_file, 'w', encoding='utf-8') as f:
-            json.dump(raw_invoice_details, f, indent=2, ensure_ascii=False)
-        logger.info(f"Réponse brute sauvegardée dans {debug_file}")
-    except Exception as e:
-        logger.error(f"Impossible de sauvegarder la réponse brute: {e}")
-    # AJOUTEZ CE CODE ICI - Fin
-    
-    # Logs pour le debugging
-    logger.debug(f"Champs disponibles dans la réponse brute: {raw_invoice_details.keys()}")
-    
-    # Normalisation des données pour Airtable
-    normalized_data = self.normalize_invoice_data(raw_invoice_details)
-    
-    # Log des données normalisées (limité pour éviter les logs trop longs)
-    logger.info(f"Facture {invoice_id} normalisée avec {len(normalized_data)} champs")
-    logger.debug(f"Échantillon des champs normalisés: {list(normalized_data.keys())[:10]}")
-    
-    return normalized_data
+        raw_invoice_details = self._make_api_request("Purchase.getOne", params) or {}
+        
+        # Afficher directement la réponse JSON dans les logs
+        log_json(raw_invoice_details, f"Détails bruts de la facture {invoice_id}")
+        
+        # Sauvegarde également dans un fichier pour consultation ultérieure
+        try:
+            debug_dir = "debug_json"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, f"invoice_{invoice_id}_raw.json")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                json.dump(raw_invoice_details, f, indent=2, ensure_ascii=False)
+            logger.info(f"Réponse brute sauvegardée dans {debug_file}")
+        except Exception as e:
+            logger.error(f"Impossible de sauvegarder la réponse brute: {e}")
+        
+        # Logs pour le debugging
+        if raw_invoice_details:
+            logger.debug(f"Champs disponibles dans la réponse brute: {list(raw_invoice_details.keys())}")
+        else:
+            logger.warning(f"Aucun détail reçu pour la facture {invoice_id}")
+        
+        # Normalisation des données pour Airtable
+        normalized_data = self.normalize_invoice_data(raw_invoice_details)
+        
+        # Log des données normalisées
+        log_json(normalized_data, f"Facture {invoice_id} normalisée")
+        
+        return normalized_data
 
     def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
         """
@@ -514,6 +548,10 @@ class SellsySupplierAPI:
                             normalized_item = self.normalize_item_data(item)
                             items.append(normalized_item)
         
+        # Afficher les items dans les logs
+        if items:
+            log_json(items, f"Lignes de la facture {invoice_id}")
+        
         logger.info(f"Récupéré {len(items)} lignes pour la facture {invoice_id}")
         return items
     
@@ -553,14 +591,31 @@ class SellsySupplierAPI:
         return normalized_item
 
 
-# Exemple d'utilisation
+# Exemple d'utilisation avec debug activé pour voir les JSON
 if __name__ == "__main__":
+    # Activer les logs DEBUG pour voir tous les détails JSON
+    logger.setLevel(logging.DEBUG)
+    
+    # Configurer un handler pour la console avec un format lisible
+    console_handler = logging.StreamHandler()
+    console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(console_formatter)
+    
+    # Supprimer les anciens handlers et ajouter le nouveau
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    logger.addHandler(console_handler)
+    
+    # Initialiser l'API et tester
     sellsy_api = SellsySupplierAPI()
     if sellsy_api.test_connection():
-        invoices = sellsy_api.get_all_supplier_invoices(limit=5)  # Limité à 5 pour les tests
+        invoices = sellsy_api.get_all_supplier_invoices(limit=2)  # Limité à 2 pour les tests
         for invoice in invoices:
             invoice_id = invoice.get('id')
             if invoice_id:
+                logger.info(f"==== Traitement de la facture {invoice_id} ====")
+                
+                # Récupérer les détails complets
                 details = sellsy_api.get_supplier_invoice_details(invoice_id)
                 logger.info(f"Facture {invoice_id} - Nombre de champs: {len(details)}")
                 
