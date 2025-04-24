@@ -4,6 +4,7 @@ import datetime
 import os
 import base64
 import logging
+import re
 from typing import Dict, Optional, Any, List, Union
 
 # Configuration du logging
@@ -73,9 +74,21 @@ class AirtableSupplierAPI:
         
         # Formatage de la date pour Airtable
         if created_date:
-            # Si la date contient un T (format ISO), prendre juste la partie date
-            if isinstance(created_date, str) and "T" in created_date:
-                created_date = created_date.split("T")[0]
+            # Conversion en format standard YYYY-MM-DD
+            if isinstance(created_date, str):
+                # Si format ISO avec T
+                if "T" in created_date:
+                    created_date = created_date.split("T")[0]
+                # Vérifier et nettoyer le format de date
+                if not re.match(r'^\d{4}-\d{2}-\d{2}$', created_date):
+                    try:
+                        # Tentative de conversion si format non standard
+                        date_obj = datetime.datetime.strptime(created_date, "%Y-%m-%d")
+                        created_date = date_obj.strftime("%Y-%m-%d")
+                    except ValueError:
+                        # Si échec, utiliser la date actuelle
+                        logger.warning(f"Format de date invalide '{created_date}', utilisation de la date actuelle")
+                        created_date = datetime.datetime.now().strftime("%Y-%m-%d")
         else:
             # Date par défaut
             created_date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -175,7 +188,8 @@ class AirtableSupplierAPI:
             logger.warning("ID Sellsy vide, impossible de rechercher la facture fournisseur")
             return None
             
-        sellsy_id = str(sellsy_id)  # Sécurité : conversion en chaîne
+        # Sécurité : conversion en chaîne et échappement des apostrophes
+        sellsy_id = str(sellsy_id).replace("'", "''")
         formula = f"{{ID_Facture_Fournisseur}}='{sellsy_id}'"
         logger.info(f"Recherche dans Airtable avec formule : {formula}")
         
@@ -208,6 +222,13 @@ class AirtableSupplierAPI:
         
         try:
             with open(file_path, 'rb') as file:
+                # Vérification du contenu du fichier (premiers octets d'un PDF: %PDF)
+                first_bytes = file.read(4)
+                file.seek(0)  # Revenir au début du fichier
+                
+                if first_bytes != b'%PDF':
+                    logger.warning(f"Le fichier {file_path} ne semble pas être un PDF valide")
+                
                 encoded_string = base64.b64encode(file.read()).decode('utf-8')
                 logger.debug(f"Fichier {file_path} encodé avec succès ({len(encoded_string)} caractères)")
                 return encoded_string
