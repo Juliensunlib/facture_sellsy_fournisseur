@@ -97,16 +97,19 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         
         logger.info(f"📩 Webhook reçu pour une facture fournisseur: {data.get('event', 'unknown')}")
         
-        # Vérifier le type d'événement
+        # Vérifier le type d'événement (adapté pour l'API v1)
+        # Note: Vérifiez la documentation Sellsy v1 pour le format exact des événements
         event_type = data.get("event", "")
-        if not event_type.startswith("purchase.invoice"):
+        if not event_type.startswith("purchaseinvoice"):
             logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {event_type}")
             return {"status": "ignored", "reason": "event not related to supplier invoices"}
         
-        # Extraction de l'ID de facture fournisseur
+        # Extraction de l'ID de facture fournisseur (adapté pour l'API v1)
         invoice_id = None
         if "data" in data and "id" in data["data"]:
             invoice_id = data["data"]["id"]
+        elif "object" in data and "id" in data["object"]:
+            invoice_id = data["object"]["id"]
         elif "entityid" in data:
             invoice_id = data["entityid"]
             
@@ -123,6 +126,7 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         
         while retry_count < max_retries and not invoice_details:
             try:
+                # Utilisation de la méthode v1 pour récupérer les détails
                 invoice_details = sellsy_api.get_supplier_invoice_details(invoice_id)
                 if not invoice_details and retry_count < max_retries - 1:
                     retry_count += 1
@@ -185,8 +189,9 @@ async def health_check():
     apis_status = {"sellsy": "unknown", "airtable": "unknown"}
     
     try:
-        # Test simple de l'API Sellsy
-        _ = sellsy_api.get_access_token()
+        # Test simple de l'API Sellsy v1
+        # Pour l'API v1, nous devons adapter la vérification de connexion
+        _ = sellsy_api.test_connection()
         apis_status["sellsy"] = "ok"
     except Exception as e:
         logger.warning(f"Problème avec l'API Sellsy: {e}")
@@ -216,7 +221,7 @@ async def root():
         Message d'information sur le service
     """
     return {
-        "service": "Sellsy to Airtable Synchronization Webhook",
+        "service": "Sellsy v1 to Airtable Synchronization Webhook",
         "endpoints": [
             "/webhook/supplier-invoice",
             "/health"
