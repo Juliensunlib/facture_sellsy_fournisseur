@@ -137,10 +137,10 @@ class SellsySupplierAPI:
             return False
 
    def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
-    """
-    Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
-    """
-    logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
+        """
+        Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
+        """
+        logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
 
     params = {
         "filters": {
@@ -165,7 +165,6 @@ class SellsySupplierAPI:
         logger.info(f"Liste brute des factures sauvegardée dans {debug_file}")
     except Exception as e:
         logger.error(f"Impossible de sauvegarder la liste brute: {e}")
-    # AJOUTEZ CE CODE ICI - Fin
     
     if isinstance(result, dict):
         invoices = list(result.values())
