@@ -113,3 +113,58 @@ class SellsySupplierAPI:
             time.sleep(5)
 
         return None
+
+    def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
+        """
+        Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
+        """
+        logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
+
+        params = {
+            "filters": {
+                "documentType": "supplierinvoice"
+            },
+            "pagination": {
+                "pagenum": 1,
+                "pagesize": limit
+            }
+        }
+
+        result = self._make_api_request("Accounting.getList", params)
+        if isinstance(result, dict):
+            return list(result.values())
+        return []
+
+    def sync_missing_supplier_invoices(self, limit: int = 1000) -> None:
+        """
+        Synchronise les factures manquantes en récupérant toutes les factures fournisseurs
+        et en les sauvegardant dans un répertoire local.
+        """
+        logger.info("Début de la synchronisation des factures manquantes...")
+        invoices = self.get_all_supplier_invoices(limit)
+        
+        if invoices:
+            for invoice in invoices:
+                invoice_id = invoice.get('id')
+                pdf_url = invoice.get('pdf_url')
+                if invoice_id and pdf_url:
+                    self.download_pdf(invoice_id, pdf_url)
+
+    def download_pdf(self, invoice_id: str, pdf_url: str) -> None:
+        """
+        Télécharge le PDF de la facture et l'enregistre dans le répertoire spécifié.
+        """
+        try:
+            logger.info(f"Téléchargement de la facture {invoice_id} depuis {pdf_url}")
+            response = requests.get(pdf_url, stream=True)
+            response.raise_for_status()  # Vérifie si la requête est réussie
+
+            pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
+            with open(pdf_path, 'wb') as pdf_file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    pdf_file.write(chunk)
+
+            logger.info(f"Facture {invoice_id} téléchargée et sauvegardée à {pdf_path}")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erreur lors du téléchargement du PDF pour la facture {invoice_id}: {e}")
