@@ -135,6 +135,18 @@ class SellsySupplierAPI:
             return list(result.values())
         return []
 
+    def get_supplier_invoice_details(self, invoice_id: str) -> Dict:
+        """
+        Récupère les détails d'une facture spécifique par son ID.
+        """
+        logger.info(f"🔍 Récupération des détails de la facture {invoice_id}")
+
+        params = {
+            "id": invoice_id
+        }
+
+        return self._make_api_request("Accounting.get", params) or {}
+
     def sync_missing_supplier_invoices(self, limit: int = 1000) -> None:
         """
         Synchronise les factures manquantes en récupérant toutes les factures fournisseurs
@@ -146,9 +158,13 @@ class SellsySupplierAPI:
         if invoices:
             for invoice in invoices:
                 invoice_id = invoice.get('id')
-                pdf_url = invoice.get('pdf_url')
-                if invoice_id and pdf_url:
-                    self.download_pdf(invoice_id, pdf_url)
+                if invoice_id:
+                    # Récupérer les détails de la facture
+                    details = self.get_supplier_invoice_details(invoice_id)
+                    logger.info(f"Détails de la facture {invoice_id}: {details}")
+                    pdf_url = details.get('pdf_url')
+                    if pdf_url:
+                        self.download_pdf(invoice_id, pdf_url)
 
     def download_pdf(self, invoice_id: str, pdf_url: str) -> None:
         """
