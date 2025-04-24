@@ -1,5 +1,5 @@
 import argparse
-from sellsy_api import SellsyAPI
+from sellsy_api import SellsySupplierAPI
 from airtable_api import AirtableAPI
 import uvicorn
 from webhook_handler import app
