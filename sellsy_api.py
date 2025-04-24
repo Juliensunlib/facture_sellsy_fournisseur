@@ -205,115 +205,338 @@ class SellsySupplierAPI:
         
         return results
 
-   def get_all_supplier_invoices(self, limit: int = 1000) -> List[Dict]:
+   def get_all_supplier_invoices(self, limit=1000, **filters):
     """
-    Récupère toutes les factures fournisseurs jusqu'à la limite spécifiée.
-    Utilise correctement la méthode Supplier.getList selon la documentation.
+    Récupère toutes les factures fournisseur avec pagination robuste
+    
+    Args:
+        limit: Nombre maximum de factures à récupérer (défaut: 1000)
+        **filters: Filtres additionnels à passer à l'API Sellsy
+                - created_after: Date de début (format ISO)
+                - created_before: Date de fin (format ISO)
+                - status: Statut des factures
     """
-    logger.info(f"🔄 Récupération de toutes les factures fournisseurs (limite: {limit})")
-
-    # Utilisation de Supplier.getList comme indiqué dans la documentation
-    params = {
-        "pagination": {
-            "nbperpage": limit,
-            "pagenum": 1
-        },
-        "search": {
-            "doctype": "invoice"  # Pour les factures
-        }
+    token = self.get_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
-
-    result = self._make_api_request("Supplier.getList", params)
     
-    # Si la première méthode ne fonctionne pas, essayer une alternative
-    if not result or not isinstance(result, dict) or len(result) == 0:
-        logger.warning("Méthode Supplier.getList infructueuse, essai avec une méthode alternative")
-        
-        # Alternative avec Purchase.getList (déjà dans votre code)
+    all_invoices = []
+    current_page = 1
+    page_size = 100  # La taille de page maximale généralement acceptée par Sellsy
+    
+    # Paramètres de pagination
+    max_retries = 5        # Nombre maximum de tentatives par page
+    retry_delay = 5        # Délai entre les tentatives en secondes
+    page_delay = 1         # Délai entre les pages en secondes
+    
+    print(f"🚀 Récupération de toutes les factures fournisseur (limite: {limit})...")
+    if filters:
+        print(f"📋 Filtres appliqués: {filters}")
+    
+    # Boucle de pagination
+    while len(all_invoices) < limit:
+        # Construction des paramètres de la requête
         params = {
-            "pagination": {
-                "nbperpage": limit,
-                "pagenum": 1
-            },
-            "search": {
-                "doctype": "supplierinvoice"
-            }
+            "limit": page_size,
+            "offset": (current_page - 1) * page_size,
+            "order": "created",
+            "direction": "desc"
         }
-        result = self._make_api_request("Purchase.getList", params)
+        
+        # Ajout des filtres additionnels
+        params.update(filters)
+        
+        # Endpoint des factures fournisseur
+        url = f"{self.api_url}/supplier-invoices"
+        print(f"📄 Récupération de la page {current_page} (offset {params['offset']}): {url}")
+        
+        # Gestion des tentatives pour cette page
+        retry_count = 0
+        success = False
+        
+        while retry_count < max_retries and not success:
+            try:
+                response = requests.get(url, headers=headers, params=params)
+                status_code = response.status_code
+                print(f"📊 Statut de la réponse: {status_code}")
+                
+                if status_code == 200:
+                    # Traitement des données en cas de succès
+                    response_data = response.json()
+                    page_invoices = response_data.get("data", [])
+                    
+                    # Si la page est vide, on a fini
+                    if not page_invoices:
+                        print("🏁 Page vide reçue, fin de la pagination")
+                        return all_invoices[:limit]
+                        
+                    # Nombre de factures restantes à récupérer
+                    remaining = limit - len(all_invoices)
+                    
+                    # Ajouter seulement les factures nécessaires
+                    invoices_to_add = page_invoices[:remaining]
+                    all_invoices.extend(invoices_to_add)
+                    
+                    print(f"✅ Page {current_page}: {len(invoices_to_add)} factures fournisseur récupérées (total: {len(all_invoices)}/{limit})")
+                    
+                    # Vérifier si on doit continuer la pagination
+                    if len(all_invoices) >= limit:
+                        print("🏁 Limite atteinte, fin de la récupération")
+                        return all_invoices[:limit]
+                    
+                    if len(page_invoices) < page_size:
+                        print("🏁 Dernière page atteinte (moins de résultats que la taille de page)")
+                        return all_invoices[:limit]
+                    
+                    # Passer à la page suivante
+                    current_page += 1
+                    success = True
+                    
+                    # Pause entre les pages pour éviter de surcharger l'API
+                    print(f"⏱️ Pause de {page_delay} seconde(s) entre les pages...")
+                    time.sleep(page_delay)
+                    
+                elif status_code == 401:
+                    # Token expiré, renouvellement
+                    print("🔄 Token expiré, renouvellement...")
+                    self.token_expires_at = 0
+                    token = self.get_access_token()
+                    headers["Authorization"] = f"Bearer {token}"
+                    retry_count += 1
+                    print(f"🔄 Nouveau token obtenu, tentative {retry_count}/{max_retries} pour la page {current_page}")
+                
+                elif status_code == 429:
+                    # Rate limiting - attendre plus longtemps
+                    wait_time = 30  # 30 secondes par défaut
+                    if 'Retry-After' in response.headers:
+                        try:
+                            wait_time = int(response.headers['Retry-After'])
+                        except ValueError:
+                            pass
+                    
+                    print(f"⚠️ Limitation de débit (429), attente de {wait_time} secondes...")
+                    time.sleep(wait_time)
+                    retry_count += 1
+                
+                else:
+                    # Autres erreurs
+                    print(f"❌ Erreur lors de la récupération (page {current_page}): {status_code} - {response.text}")
+                    retry_count += 1
+                    
+                    if retry_count >= max_retries:
+                        print(f"❌ Nombre maximum de tentatives atteint pour la page {current_page}")
+                    else:
+                        print(f"⏱️ Tentative {retry_count}/{max_retries} après {retry_delay} secondes...")
+                        time.sleep(retry_delay)
+            
+            except Exception as e:
+                # Gestion des exceptions (problèmes réseau, etc.)
+                print(f"❌ Exception lors de la récupération de la page {current_page}: {e}")
+                retry_count += 1
+                
+                if retry_count >= max_retries:
+                    print(f"❌ Nombre maximum de tentatives atteint pour la page {current_page}")
+                else:
+                    print(f"⏱️ Tentative {retry_count}/{max_retries} après {retry_delay} secondes...")
+                    time.sleep(retry_delay)
+        
+        # Si toutes les tentatives ont échoué pour cette page
+        if not success:
+            print(f"⚠️ Impossible de récupérer la page {current_page} après {max_retries} tentatives")
+            print(f"⚠️ Retour des {len(all_invoices)} factures déjà récupérées")
+            return all_invoices[:limit]
+
+    print(f"🎉 Total des factures fournisseur récupérées: {len(all_invoices)}")
+    return all_invoices[:limit]
+
+def get_supplier_invoice_details(self, invoice_id):
+    """Récupère les détails d'une facture fournisseur spécifique"""
+    if not invoice_id:
+        print("❌ ID de facture fournisseur invalide")
+        return None
+        
+    invoice_id = str(invoice_id)  # Conversion en chaîne
+    token = self.get_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
     
-    return invoices
-        
-        # Si la première méthode ne fonctionne pas, essayer une alternative
-        if not result or not isinstance(result, dict) or len(result) == 0:
-            logger.warning("Première méthode infructueuse, essai avec une méthode alternative")
-            
-            # Méthode alternative 1
-            params = {
-                "type": "supplierinvoice",
-                "nbperpage": limit
-            }
-            result = self._make_api_request("Accounting.getAccountingDocuments", params)
-            
-            # Si toujours pas de résultat, essayer une autre méthode
-            if not result or not isinstance(result, dict) or len(result) == 0:
-                logger.warning("Deuxième méthode infructueuse, essai avec une autre méthode")
-                
-                # Méthode alternative 2
-                params = {
-                    "doctype": "supplierinvoice"
-                }
-                result = self._make_api_request("Document.getList", params)
-        
-        # Journalisation de la liste brute des factures
-        log_json(result, "Liste brute des factures fournisseurs")
-        
-        # Sauvegarde également dans un fichier pour consultation ultérieure
+    url = f"{self.api_url}/supplier-invoices/{invoice_id}"
+    print(f"🔍 Récupération des détails de la facture fournisseur {invoice_id}: {url}")
+    
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
         try:
-            debug_dir = "debug_json"
-            os.makedirs(debug_dir, exist_ok=True)
-            debug_file = os.path.join(debug_dir, "all_invoices_raw.json")
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
-            logger.info(f"Liste brute des factures sauvegardée dans {debug_file}")
-        except Exception as e:
-            logger.error(f"Impossible de sauvegarder la liste brute: {e}")
-        
-        # Traitement des résultats selon leur structure
-        invoices = []
-        
-        if isinstance(result, dict):
-            # Structure possible 1: dictionnaire avec des clés numériques
-            if all(k.isdigit() for k in result.keys() if k != '_xml_childtag'):
-                logger.info("Structure détectée: dictionnaire avec clés numériques")
-                for k, v in result.items():
-                    if k != '_xml_childtag' and isinstance(v, dict):
-                        invoices.append(self.normalize_invoice_data(v))
+            response = requests.get(url, headers=headers)
+            status_code = response.status_code
+            print(f"📊 Statut: {status_code}")
             
-            # Structure possible 2: liste dans un champ spécifique
-            elif any(field in result for field in ['result', 'list', 'data', 'invoices', 'documents']):
-                logger.info("Structure détectée: liste dans un champ spécifique")
-                for field in ['result', 'list', 'data', 'invoices', 'documents']:
-                    if field in result and result[field]:
-                        if isinstance(result[field], dict):
-                            for k, v in result[field].items():
-                                if k != '_xml_childtag' and isinstance(v, dict):
-                                    invoices.append(self.normalize_invoice_data(v))
-                        elif isinstance(result[field], list):
-                            for item in result[field]:
-                                if isinstance(item, dict):
-                                    invoices.append(self.normalize_invoice_data(item))
+            if status_code == 200:
+                data = response.json()
+                # Vérifier le format de la réponse
+                if "data" in data:
+                    print(f"✅ Détails de la facture fournisseur {invoice_id} récupérés (format avec data)")
+                    return data.get("data", {})
+                else:
+                    print(f"✅ Détails de la facture fournisseur {invoice_id} récupérés (format direct)")
+                    return data
             
-            # Structure possible 3: résultat direct
+            elif status_code == 401:
+                # Renouveler le token et réessayer
+                print("🔄 Token expiré, renouvellement...")
+                self.token_expires_at = 0
+                token = self.get_access_token()
+                headers["Authorization"] = f"Bearer {token}"
+                retry_count += 1
+            
+            elif status_code == 404:
+                print(f"❌ Facture fournisseur {invoice_id} non trouvée (404)")
+                return None
+            
             else:
-                logger.info("Structure détectée: structure inconnue, tentative de normalisation directe")
-                invoices = [self.normalize_invoice_data(result)]
-                
-        elif isinstance(result, list):
-            logger.info("Structure détectée: liste directe")
-            invoices = [self.normalize_invoice_data(item) for item in result if isinstance(item, dict)]
+                print(f"❌ Erreur {status_code}: {response.text}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = 5  # 5 secondes entre les tentatives
+                    print(f"⏱️ Tentative {retry_count}/{max_retries} dans {wait_time} secondes...")
+                    time.sleep(wait_time)
         
-        logger.info(f"Nombre de factures récupérées après traitement: {len(invoices)}")
-        return invoices
+        except Exception as e:
+            print(f"❌ Exception lors de la récupération des détails: {e}")
+            retry_count += 1
+            if retry_count < max_retries:
+                wait_time = 5
+                print(f"⏱️ Tentative {retry_count}/{max_retries} dans {wait_time} secondes...")
+                time.sleep(wait_time)
+    
+    print(f"❌ Échec après {max_retries} tentatives pour la facture fournisseur {invoice_id}")
+    return None
+
+def download_supplier_invoice_pdf(self, invoice_id):
+    """Télécharge le PDF d'une facture fournisseur et retourne le chemin du fichier"""
+    if not invoice_id:
+        print("❌ ID de facture fournisseur invalide pour le téléchargement du PDF")
+        return None
+    
+    # Conversion explicite en string
+    invoice_id = str(invoice_id)
+    
+    # Définir le chemin du fichier PDF
+    pdf_filename = f"facture_fournisseur_{invoice_id}.pdf"
+    pdf_path = os.path.join(PDF_STORAGE_DIR, pdf_filename)
+    
+    # Vérifier si le fichier existe déjà
+    if os.path.exists(pdf_path):
+        file_size = os.path.getsize(pdf_path)
+        if file_size > 0:
+            print(f"📄 PDF déjà existant pour la facture fournisseur {invoice_id}: {pdf_path} ({file_size} octets)")
+            return pdf_path
+        else:
+            print(f"⚠️ Fichier PDF existant mais vide, retéléchargement...")
+    
+    # Si non, d'abord récupérer les détails de la facture pour obtenir le lien PDF direct
+    invoice_details = self.get_supplier_invoice_details(invoice_id)
+    if not invoice_details:
+        print(f"❌ Impossible de récupérer les détails pour télécharger le PDF")
+        return None
+    
+    # Vérifier si le lien PDF est disponible directement dans les détails de la facture
+    pdf_link = invoice_details.get("pdf_link")
+    if not pdf_link:
+        print(f"⚠️ Lien PDF non trouvé dans les détails de la facture fournisseur {invoice_id}")
+        # Essayer l'URL standard quand même
+    else:
+        print(f"🔗 Lien PDF trouvé: {pdf_link}")
+    
+    # Méthodes de téléchargement à essayer
+    methods = [
+        {
+            "name": "Lien direct",
+            "url": pdf_link,
+            "headers": {
+                "Authorization": f"Bearer {self.get_access_token()}",
+                "Accept": "application/pdf"
+            },
+            "skip_if_none": True  # Ignorer si pdf_link est None
+        },
+        {
+            "name": "API standard",
+            "url": f"{self.api_url}/supplier-invoices/{invoice_id}/document",
+            "headers": {
+                "Authorization": f"Bearer {self.get_access_token()}",
+                "Accept": "application/pdf"
+            },
+            "skip_if_none": False
+        }
+    ]
+    
+    # Essayer chaque méthode jusqu'à ce qu'une fonctionne
+    for method in methods:
+        # Vérifier si on doit sauter cette méthode
+        if method["skip_if_none"] and not method["url"]:
+            continue
+            
+        url = method["url"]
+        name = method["name"]
+        print(f"📥 Téléchargement par {name}: {url}")
+        
+        try:
+            response = requests.get(url, headers=method["headers"])
+            status_code = response.status_code
+            print(f"📊 Statut: {status_code}")
+            
+            if status_code == 200:
+                # Vérifier que c'est bien un PDF
+                content_type = response.headers.get('Content-Type', '')
+                content_length = len(response.content)
+                
+                if ('pdf' not in content_type.lower() and 
+                    content_length < 1000 and 
+                    not response.content.startswith(b'%PDF')):
+                    print(f"⚠️ Contenu non PDF reçu: {content_type}, taille: {content_length}")
+                    continue
+                
+                # Sauvegarder le PDF
+                with open(pdf_path, 'wb') as f:
+                    f.write(response.content)
+                
+                file_size = os.path.getsize(pdf_path)
+                print(f"✅ PDF téléchargé avec succès: {pdf_path} ({file_size} octets)")
+                return pdf_path
+            
+            elif status_code == 401:
+                # Renouveler le token et réessayer une fois
+                print("🔄 Token expiré, renouvellement...")
+                self.token_expires_at = 0
+                new_token = self.get_access_token()
+                method["headers"]["Authorization"] = f"Bearer {new_token}"
+                
+                # Nouvel essai avec le token renouvelé
+                response = requests.get(url, headers=method["headers"])
+                if response.status_code == 200:
+                    with open(pdf_path, 'wb') as f:
+                        f.write(response.content)
+                    file_size = os.path.getsize(pdf_path)
+                    print(f"✅ PDF téléchargé après renouvellement: {pdf_path} ({file_size} octets)")
+                    return pdf_path
+            
+            print(f"❌ Échec du téléchargement par {name}: {status_code}")
+            
+        except Exception as e:
+            print(f"❌ Exception lors du téléchargement par {name}: {e}")
+    
+    # Si toutes les méthodes ont échoué, créer un fichier vide
+    print("❌ Toutes les méthodes de téléchargement ont échoué")
+    with open(pdf_path, 'w') as f:
+        f.write("")
+    print(f"⚠️ Fichier vide créé: {pdf_path}")
+    return pdf_path
 
     def get_nested_value(self, data: Dict, key_path: str, default: Any = None) -> Any:
         """
