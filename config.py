@@ -4,10 +4,16 @@ from dotenv import load_dotenv
 # Charger les variables d'environnement à partir du fichier .env si disponible
 load_dotenv()
 
-# Configuration Sellsy
+# Configuration Sellsy v2
 SELLSY_CLIENT_ID = os.getenv("SELLSY_CLIENT_ID")
 SELLSY_CLIENT_SECRET = os.getenv("SELLSY_CLIENT_SECRET")
 SELLSY_API_URL = os.getenv("SELLSY_API_URL", "https://api.sellsy.com/v2")
+
+# Configuration Sellsy v1 (OAuth 1.0a)
+SELLSY_V1_CONSUMER_TOKEN = os.getenv("SELLSY_V1_CONSUMER_TOKEN")
+SELLSY_V1_CONSUMER_SECRET = os.getenv("SELLSY_V1_CONSUMER_SECRET")
+SELLSY_V1_USER_TOKEN = os.getenv("SELLSY_V1_USER_TOKEN")
+SELLSY_V1_USER_SECRET = os.getenv("SELLSY_V1_USER_SECRET")
 
 # Configuration Airtable
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
@@ -22,6 +28,10 @@ PDF_STORAGE_DIR = os.getenv("PDF_STORAGE_DIR", "pdf_invoices_suppliers")
 required_vars = {
     "SELLSY_CLIENT_ID": SELLSY_CLIENT_ID,
     "SELLSY_CLIENT_SECRET": SELLSY_CLIENT_SECRET,
+    "SELLSY_V1_CONSUMER_TOKEN": SELLSY_V1_CONSUMER_TOKEN,
+    "SELLSY_V1_CONSUMER_SECRET": SELLSY_V1_CONSUMER_SECRET,
+    "SELLSY_V1_USER_TOKEN": SELLSY_V1_USER_TOKEN,
+    "SELLSY_V1_USER_SECRET": SELLSY_V1_USER_SECRET,
     "AIRTABLE_API_KEY": AIRTABLE_API_KEY,
     "AIRTABLE_BASE_ID": AIRTABLE_BASE_ID,
     "AIRTABLE_SUPPLIER_TABLE_NAME": AIRTABLE_SUPPLIER_TABLE_NAME
@@ -38,7 +48,7 @@ missing_prod_vars = [name for name, value in production_vars.items() if not valu
 if missing_vars:
     print(f"ERREUR: Variables d'environnement requises manquantes: {', '.join(missing_vars)}")
     print("Assurez-vous que ces variables sont définies dans le fichier .env ou dans les secrets GitHub.")
-    
+
 # Définir une variable pour indiquer si la configuration est complète
 CONFIG_VALID = len(missing_vars) == 0
 
@@ -49,7 +59,6 @@ is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
 if CONFIG_VALID and is_production and missing_prod_vars:
     print(f"AVERTISSEMENT CRITIQUE: Variables requises en production manquantes: {', '.join(missing_prod_vars)}")
     print("Cette configuration est DANGEREUSE pour un environnement de production!")
-    # En production, considérer la configuration comme invalide si WEBHOOK_SECRET manque
     if "WEBHOOK_SECRET" in missing_prod_vars:
         CONFIG_VALID = False
         print("La vérification des signatures webhook est OBLIGATOIRE en production.")
@@ -64,4 +73,3 @@ if CONFIG_VALID and not os.path.exists(PDF_STORAGE_DIR):
         print(f"Répertoire de stockage PDF créé: {PDF_STORAGE_DIR}")
     except Exception as e:
         print(f"ERREUR: Impossible de créer le répertoire {PDF_STORAGE_DIR}: {e}")
-        # Ne pas bloquer le démarrage pour cette erreur, juste avertir
