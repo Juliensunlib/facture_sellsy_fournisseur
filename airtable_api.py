@@ -57,7 +57,7 @@ class AirtableAPI:
         # --- Récupération de l'ID de facture ---
         invoice_id = None
         if format_v1:
-            invoice_id = str(invoice.get("docid", ""))
+            invoice_id = str(invoice.get("id", ""))
         else:
             invoice_id = str(invoice.get("id", ""))
             
