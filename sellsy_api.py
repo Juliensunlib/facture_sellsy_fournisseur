@@ -166,7 +166,7 @@ class SellsySupplierAPI:
         logger.info(f"🔍 Détails de la facture fournisseur {invoice_id}")
         
         params = {
-            "docid": invoice_id
+            "id": invoice_id
         }
         
         return self._make_v1_request("Purchase.getOne", params)
