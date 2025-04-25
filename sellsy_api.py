@@ -1,17 +1,12 @@
-import requests
-import json
-import time
 import os
+import time
 import logging
-import random
-import string
+import requests
 from typing import List, Dict, Optional, Any
 from config import (
-    SELLSY_V1_CONSUMER_TOKEN,
-    SELLSY_V1_CONSUMER_SECRET,
-    SELLSY_V1_USER_TOKEN,
-    SELLSY_V1_USER_SECRET,
-    SELLSY_V1_API_URL,
+    SELLSY_CLIENT_ID,
+    SELLSY_CLIENT_SECRET,
+    SELLSY_V2_API_URL,
     PDF_STORAGE_DIR
 )
 
@@ -23,132 +18,102 @@ logger = logging.getLogger("sellsy_supplier_api")
 
 class SellsySupplierAPI:
     def __init__(self):
-        self.api_url = SELLSY_V1_API_URL
+        self.api_url = SELLSY_V2_API_URL
+        self.token_url = "https://api.sellsy.com/oauth2/token"
+        self.access_token = self.get_access_token()
 
-        if not all([SELLSY_V1_CONSUMER_TOKEN, SELLSY_V1_CONSUMER_SECRET,
-                    SELLSY_V1_USER_TOKEN, SELLSY_V1_USER_SECRET]):
-            raise ValueError("Identifiants Sellsy v1 manquants")
+        if not self.access_token:
+            raise ValueError("Impossible d'obtenir un token OAuth2 depuis Sellsy.")
 
         os.makedirs(PDF_STORAGE_DIR, exist_ok=True)
 
-    def _generate_oauth_signature(self, method: str, request_params: Dict) -> Dict:
-        nonce = ''.join(random.choices(string.ascii_uppercase + string.digits, k=20))
-        timestamp = str(int(time.time()))
-
-        oauth_params = {
-            'oauth_consumer_key': SELLSY_V1_CONSUMER_TOKEN,
-            'oauth_token': SELLSY_V1_USER_TOKEN,
-            'oauth_signature_method': 'PLAINTEXT',
-            'oauth_timestamp': timestamp,
-            'oauth_nonce': nonce,
-            'oauth_version': '1.0',
-            'oauth_signature': f"{SELLSY_V1_CONSUMER_SECRET}&{SELLSY_V1_USER_SECRET}"
-        }
-
-        request = {
-            'request': 1,
-            'io_mode': 'json',
-            'do_in': json.dumps({
-                'method': method,
-                'params': request_params or {}
+    def get_access_token(self) -> Optional[str]:
+        logger.info("🔐 Récupération du token OAuth2 Sellsy")
+        try:
+            response = requests.post(self.token_url, data={
+                "grant_type": "client_credentials",
+                "client_id": SELLSY_CLIENT_ID,
+                "client_secret": SELLSY_CLIENT_SECRET
             })
-        }
 
-        return {'oauth_params': oauth_params, 'request': request}
-
-    def _make_api_request(self, method: str, params: Dict = None, retry: int = 3) -> Optional[Dict]:
-        if params is None:
-            params = {}
-
-        auth_data = self._generate_oauth_signature(method, params)
-        oauth_params = auth_data['oauth_params']
-        request_params = auth_data['request']
-
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json'
-        }
-
-        for attempt in range(retry):
-            try:
-                response = requests.post(
-                    self.api_url,
-                    headers=headers,
-                    data=request_params,
-                    params=oauth_params,
-                    timeout=30
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('status') == 'error':
-                        logger.error(f"Erreur API: {data.get('error')}")
-                        return None
-                    return data.get('response', data)
-                else:
-                    logger.error(f"Erreur HTTP {response.status_code}: {response.text}")
-            except requests.RequestException as e:
-                logger.error(f"Exception API: {e}")
-            time.sleep(5)
+            if response.status_code == 200:
+                token_data = response.json()
+                return token_data.get("access_token")
+            else:
+                logger.error(f"Erreur OAuth2 : {response.status_code} {response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Erreur de requête OAuth2 : {e}")
         return None
 
-    def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
-        logger.info("Récupération des factures fournisseurs...")
+    def _make_get(self, endpoint: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/json"
+        }
+        try:
+            response = requests.get(f"{self.api_url}{endpoint}", headers=headers, params=params)
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Erreur API GET {endpoint}: {response.status_code} - {response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Exception API GET: {e}")
+        return None
+
+    def _make_post(self, endpoint: str, json_data: Dict) -> Optional[Dict[str, Any]]:
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        try:
+            response = requests.post(f"{self.api_url}{endpoint}", headers=headers, json=json_data)
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Erreur API POST {endpoint}: {response.status_code} - {response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Exception API POST: {e}")
+        return None
+
+    def get_purchase_invoices(self, limit: int = 100) -> List[Dict]:
+        logger.info("📥 Récupération des factures d'achat OCR...")
+        offset = 0
         invoices = []
-        page = 1
-        per_page = 100
 
         while len(invoices) < limit:
             params = {
-                "pagination": {
-                    "nbperpage": per_page,
-                    "pagenum": page
-                },
-                "search": {
-                    "doctype": "supplierinvoice",
-                    "steps": ["due", "paid", "late"]
-                }
+                "limit": min(limit - len(invoices), 100),
+                "offset": offset,
+                "order": "created_at",
+                "direction": "desc"
             }
-            result = self._make_api_request("Document.getList", params)
-            if not result or not isinstance(result, dict):
+
+            data = self._make_get("/ocr/pur-invoice", params=params)
+            if not data or "data" not in data:
                 break
 
-            page_items = list(result.values())
-            if not page_items:
+            batch = data["data"]
+            invoices.extend(batch)
+            if len(batch) < 100:
                 break
+            offset += len(batch)
 
-            invoices.extend(page_items)
-            if len(page_items) < per_page:
-                break
-            page += 1
         return invoices[:limit]
 
-    def get_supplier_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"Récupération des détails de la facture {invoice_id}")
-        result = self._make_api_request("Document.getOne", {"id": invoice_id})
-        if not result:
-            logger.warning(f"Facture {invoice_id} non trouvée")
-            return None
-        return result.get(invoice_id)
+    def get_invoice_details(self, invoice_id: str) -> Optional[Dict]:
+        logger.info(f"🔍 Détails de la facture {invoice_id}")
+        return self._make_get(f"/ocr/pur-invoice/{invoice_id}")
 
-    def download_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
-        logger.info(f"Téléchargement du PDF de la facture {invoice_id}")
-        result = self._make_api_request("Document.getPdf", {
-            "docid": invoice_id,
-            "doctype": "supplierinvoice"
-        })
-        if not result or "downloadUrl" not in result:
-            logger.warning(f"Lien PDF non trouvé pour {invoice_id}")
-            return None
-
-        pdf_url = result["downloadUrl"]
-        response = requests.get(pdf_url)
-        if response.status_code != 200:
-            logger.error(f"Erreur lors du téléchargement du PDF: {response.status_code}")
-            return None
-
-        pdf_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
-        with open(pdf_path, 'wb') as f:
-            f.write(response.content)
-        logger.info(f"PDF enregistré: {pdf_path}")
-        return pdf_path
+    def download_invoice_pdf(self, pdf_url: str, invoice_id: str) -> Optional[str]:
+        logger.info(f"⬇️ Téléchargement du PDF pour la facture {invoice_id}")
+        try:
+            response = requests.get(pdf_url)
+            if response.status_code == 200:
+                file_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
+                with open(file_path, "wb") as f:
+                    f.write(response.content)
+                logger.info(f"📄 PDF enregistré: {file_path}")
+                return file_path
+            else:
+                logger.error(f"Erreur téléchargement PDF: {response.status_code}")
+        except requests.RequestException as e:
+            logger.error(f"Erreur lors du téléchargement du PDF: {e}")
+        return None
