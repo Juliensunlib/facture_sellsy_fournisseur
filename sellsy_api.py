@@ -84,50 +84,48 @@ class SellsySupplierAPI:
         return None
 
     def _make_v1_request(self, method: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
-    """
-    Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
-    """
-    headers = {
-        "Authorization": f"Bearer {self.access_token}",
-        "Content-Type": "application/json"
-    }
-    
-    # Format spécifique pour les requêtes API v1 avec io_mode et do_in requis
-    payload = {
-        "method": method,
-        "params": params,
-        "io_mode": "json",
-        "do_in": "json"
-    }
-    
-    logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
-    logger.info(f"Payload: {json.dumps(payload, indent=2)}")
-    
-    try:
-        response = requests.post(self.api_v1_url, headers=headers, json=payload)
-        logger.info(f"Code de statut de la réponse: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            logger.info(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")  # Limiter à 500 caractères
-            return result
-        
-        logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
-    except requests.RequestException as e:
-        logger.error(f"Exception API v1: {e}")
-    except json.JSONDecodeError as e:
-        logger.error(f"Erreur de décodage JSON: {e}")
-        logger.error(f"Contenu de la réponse: {response.text[:500]}...")  # Limiter à 500 caractères
-    
-    return None
+        """
+        Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "method": method,
+            "params": params,
+            "io_mode": "json",
+            "do_in": "json"
+        }
+
+        logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
+        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+
+        try:
+            response = requests.post(self.api_v1_url, headers=headers, json=payload)
+            logger.info(f"Code de statut de la réponse: {response.status_code}")
+
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")
+                return result
+
+            logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Exception API v1: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Erreur de décodage JSON: {e}")
+            logger.error(f"Contenu de la réponse: {response.text[:500]}...")
+
+        return None
 
     def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
         """
         Récupère les factures fournisseur via l'API v1 en utilisant purchaseGetList
         """
         logger.info("📥 Recherche des factures fournisseur via API v1...")
-        
-        # Paramètres pour l'API v1 purchase.getList
+
         params = {
             "pagination": {
                 "nbperpage": min(limit, 100),
@@ -138,38 +136,35 @@ class SellsySupplierAPI:
                 "field": "doc_date"
             }
         }
-        
+
         invoices = []
         total_pages = 1
         current_page = 1
-        
+
         while current_page <= total_pages and len(invoices) < limit:
             params["pagination"]["pagenum"] = current_page
-            
+
             response = self._make_v1_request("Purchase.getList", params)
-            
+
             if not response or response.get("status") != "success" or "response" not in response:
                 logger.error("Erreur lors de la récupération des factures fournisseur")
                 break
-            
+
             data = response["response"]
-            
-            # Mise à jour du nombre total de pages si disponible
+
             if current_page == 1 and "infos" in data and "nbpages" in data["infos"]:
                 total_pages = data["infos"]["nbpages"]
-            
-            # Traitement des factures
+
             if "result" in data:
                 batch = list(data["result"].values()) if isinstance(data["result"], dict) else []
                 invoices.extend(batch)
-            
+
             current_page += 1
-            
-            # Arrêt si on a atteint la limite
+
             if len(invoices) >= limit:
                 invoices = invoices[:limit]
                 break
-        
+
         logger.info(f"📋 {len(invoices)} factures fournisseur trouvées")
         return invoices
 
@@ -178,11 +173,11 @@ class SellsySupplierAPI:
         Récupère les détails d'une facture fournisseur via l'API v1
         """
         logger.info(f"🔍 Détails de la facture fournisseur {invoice_id}")
-        
+
         params = {
             "id": invoice_id
         }
-        
+
         return self._make_v1_request("Purchase.getOne", params)
 
     def search_purchase_invoices(self, limit: int = 100) -> List[Dict]:
@@ -242,19 +237,18 @@ class SellsySupplierAPI:
         Récupère le PDF d'une facture fournisseur via l'API v1
         """
         logger.info(f"📄 Récupération du PDF pour la facture fournisseur {invoice_id}")
-        
+
         params = {
             "docid": invoice_id,
             "filetype": "pdf"
         }
-        
-        # Cette requête renvoie normalement une URL de téléchargement temporaire
+
         response = self._make_v1_request("Purchase.getDocumentLink", params)
-        
+
         if response and response.get("status") == "success" and "response" in response:
             pdf_url = response["response"].get("download_url")
             if pdf_url:
                 return self.download_invoice_pdf(pdf_url, invoice_id)
-        
+
         logger.error(f"Impossible d'obtenir l'URL du PDF pour la facture {invoice_id}")
         return None
