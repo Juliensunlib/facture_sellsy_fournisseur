@@ -27,7 +27,8 @@ class AirtableAPI:
 
     def format_invoice_for_airtable(self, invoice: Dict) -> Optional[Dict]:
         """
-        Convertit une facture d'achat Sellsy V2 au format Airtable
+        Convertit une facture d'achat Sellsy au format Airtable
+        Gère à la fois le format V1 et le format OCR
         
         Args:
             invoice: Dictionnaire contenant les données de la facture d'achat
@@ -36,7 +37,7 @@ class AirtableAPI:
             Dictionnaire formaté pour Airtable ou None en cas d'erreur
         """
         # Log pour debug
-        logger.info(f"Traitement facture: {invoice.get('id', 'ID inconnu')}")
+        logger.info(f"Traitement facture: {invoice.get('id', invoice.get('docid', 'ID inconnu'))}")
         try:
             # Afficher les clés principales pour debug
             logger.debug(f"Structure complète reçue: {json.dumps(invoice, indent=2)}")
@@ -50,30 +51,49 @@ class AirtableAPI:
             
         logger.info(f"Structure de la facture - Clés principales: {list(invoice.keys())}")
         
+        # Détection du format (V1 ou OCR)
+        format_v1 = "docid" in invoice or "ident" in invoice
+        
         # --- Récupération de l'ID de facture ---
-        invoice_id = str(invoice.get("id", ""))
-        logger.info(f"ID Facture: {invoice_id}")
+        invoice_id = None
+        if format_v1:
+            invoice_id = str(invoice.get("docid", ""))
+        else:
+            invoice_id = str(invoice.get("id", ""))
+            
+        logger.info(f"ID Facture: {invoice_id} (format détecté: {'V1' if format_v1 else 'OCR/V2'})")
         
         # --- Récupération des informations fournisseur ---
         supplier_id = None
         supplier_name = ""
         
-        # Pour API V2, structure basée sur votre adaptation
-        if "related" in invoice and isinstance(invoice["related"], list):
-            for related in invoice["related"]:
-                if related.get("type") in ["individual", "corporation"]:
-                    supplier_id = str(related.get("id", ""))
-                    supplier_name = related.get("name", "")
-                    logger.info(f"Fournisseur trouvé via related: {supplier_name} (ID: {supplier_id})")
-                    break
-        elif "third" in invoice and isinstance(invoice["third"], dict):
-            supplier_id = str(invoice["third"].get("id", ""))
-            supplier_name = invoice["third"].get("name", "")
-            logger.info(f"Fournisseur trouvé via third: {supplier_name} (ID: {supplier_id})")
-        elif "supplier" in invoice and isinstance(invoice["supplier"], dict):
-            supplier_id = str(invoice["supplier"].get("id", ""))
-            supplier_name = invoice["supplier"].get("name", "")
-            logger.info(f"Fournisseur trouvé via supplier: {supplier_name} (ID: {supplier_id})")
+        if format_v1:
+            # Format V1
+            if "thirdname" in invoice:
+                supplier_name = invoice.get("thirdname", "")
+                supplier_id = str(invoice.get("thirdid", ""))
+                logger.info(f"Fournisseur trouvé via thirdname: {supplier_name} (ID: {supplier_id})")
+            elif "corp_name" in invoice:
+                supplier_name = invoice.get("corp_name", "")
+                supplier_id = str(invoice.get("thirdid", ""))
+                logger.info(f"Fournisseur trouvé via corp_name: {supplier_name} (ID: {supplier_id})")
+        else:
+            # Format OCR/V2
+            if "related" in invoice and isinstance(invoice["related"], list):
+                for related in invoice["related"]:
+                    if related.get("type") in ["individual", "corporation"]:
+                        supplier_id = str(related.get("id", ""))
+                        supplier_name = related.get("name", "")
+                        logger.info(f"Fournisseur trouvé via related: {supplier_name} (ID: {supplier_id})")
+                        break
+            elif "third" in invoice and isinstance(invoice["third"], dict):
+                supplier_id = str(invoice["third"].get("id", ""))
+                supplier_name = invoice["third"].get("name", "")
+                logger.info(f"Fournisseur trouvé via third: {supplier_name} (ID: {supplier_id})")
+            elif "supplier" in invoice and isinstance(invoice["supplier"], dict):
+                supplier_id = str(invoice["supplier"].get("id", ""))
+                supplier_name = invoice["supplier"].get("name", "")
+                logger.info(f"Fournisseur trouvé via supplier: {supplier_name} (ID: {supplier_id})")
         
         # Fallback pour le nom du fournisseur
         if not supplier_name and supplier_id:
@@ -82,8 +102,14 @@ class AirtableAPI:
         
         # --- Gestion de la date ---
         created_date = None
-        date_fields = ["created_at", "date", "issueDate", "documentdate", "displayedDate"]
         date_field_used = None
+        
+        if format_v1:
+            # Format V1
+            date_fields = ["doc_date", "created", "displayedDate", "date"]
+        else:
+            # Format OCR/V2
+            date_fields = ["created_at", "date", "issueDate", "documentdate", "displayedDate"]
         
         for field in date_fields:
             if field in invoice and invoice[field]:
@@ -125,12 +151,18 @@ class AirtableAPI:
         else:
             # Date par défaut
             created_date = datetime.datetime.now().strftime("%Y-%m-%d")
-            logger.warning(f"Date non trouvée pour la facture {invoice.get('id', 'inconnue')}, utilisation de la date actuelle")
+            logger.warning(f"Date non trouvée pour la facture {invoice_id}, utilisation de la date actuelle")
         
         # --- Récupération du numéro de facture ---
         reference = ""
         ref_field_used = None
-        ref_fields = ["reference", "number", "ident", "docnum", "document_number", "displayedIdent"]
+        
+        if format_v1:
+            # Format V1
+            ref_fields = ["ident", "docnum", "reference", "displayedIdent"]
+        else:
+            # Format OCR/V2
+            ref_fields = ["reference", "number", "ident", "docnum", "document_number", "displayedIdent"] 
         
         # Essayer les champs pour le numéro de facture
         for field in ref_fields:
@@ -154,50 +186,73 @@ class AirtableAPI:
         ht_source = None
         ttc_source = None
         
-        # Méthode 1: Extraction structurée des montants depuis "amounts"
-        if "amounts" in invoice and isinstance(invoice["amounts"], dict):
-            amounts = invoice["amounts"]
-            logger.info(f"Structure amounts trouvée: {json.dumps(amounts, indent=2)}")
+        if format_v1:
+            # Format V1
+            if "totalHT" in invoice:
+                montant_ht = self._safe_float_conversion(invoice["totalHT"])
+                ht_source = "totalHT"
+                logger.info(f"Montant HT trouvé via totalHT: {montant_ht}")
+                
+            if "totalTTC" in invoice:
+                montant_ttc = self._safe_float_conversion(invoice["totalTTC"])
+                ttc_source = "totalTTC"
+                logger.info(f"Montant TTC trouvé via totalTTC: {montant_ttc}")
+                
+            # Alternative: amounts
+            if montant_ht == 0.0 and "amount_base" in invoice:
+                montant_ht = self._safe_float_conversion(invoice["amount_base"])
+                ht_source = "amount_base"
+                logger.info(f"Montant HT trouvé via amount_base: {montant_ht}")
+                
+            if montant_ttc == 0.0 and "amount_total" in invoice:
+                montant_ttc = self._safe_float_conversion(invoice["amount_total"])
+                ttc_source = "amount_total"
+                logger.info(f"Montant TTC trouvé via amount_total: {montant_ttc}")
+        else:
+            # Format OCR/V2: Méthode 1 - Extraction structurée des montants depuis "amounts"
+            if "amounts" in invoice and isinstance(invoice["amounts"], dict):
+                amounts = invoice["amounts"]
+                logger.info(f"Structure amounts trouvée: {json.dumps(amounts, indent=2)}")
+                
+                # Montant HT
+                ht_keys = ["totalAmountWithoutVat", "total_excluding_tax", "baseHT", "totalHT", "preTax"]
+                for key in ht_keys:
+                    if key in amounts and amounts[key] is not None:
+                        montant_ht = self._safe_float_conversion(amounts[key])
+                        ht_source = f"amounts.{key}"
+                        logger.info(f"Montant HT trouvé via amounts.{key}: {montant_ht}")
+                        break
+                
+                # Montant TTC
+                ttc_keys = ["total_including_tax", "totalAmountWithTaxes", "totalTTC", "total"]
+                for key in ttc_keys:
+                    if key in amounts and amounts[key] is not None:
+                        montant_ttc = self._safe_float_conversion(amounts[key])
+                        ttc_source = f"amounts.{key}"
+                        logger.info(f"Montant TTC trouvé via amounts.{key}: {montant_ttc}")
+                        break
             
-            # Montant HT
-            ht_keys = ["totalAmountWithoutVat", "total_excluding_tax", "baseHT", "totalHT", "preTax"]
-            for key in ht_keys:
-                if key in amounts and amounts[key] is not None:
-                    montant_ht = self._safe_float_conversion(amounts[key])
-                    ht_source = f"amounts.{key}"
-                    logger.info(f"Montant HT trouvé via amounts.{key}: {montant_ht}")
-                    break
+            # Format OCR/V2: Méthode 2 - Champs directs en racine
+            direct_ht_fields = ["total_amount_without_taxes", "totalHT", "preTaxAmount", "baseHT"]
+            direct_ttc_fields = ["total_amount_with_taxes", "totalTTC", "totalAmount", "finalAmount"]
             
-            # Montant TTC
-            ttc_keys = ["total_including_tax", "totalAmountWithTaxes", "totalTTC", "total"]
-            for key in ttc_keys:
-                if key in amounts and amounts[key] is not None:
-                    montant_ttc = self._safe_float_conversion(amounts[key])
-                    ttc_source = f"amounts.{key}"
-                    logger.info(f"Montant TTC trouvé via amounts.{key}: {montant_ttc}")
-                    break
+            if montant_ht == 0.0:
+                for field in direct_ht_fields:
+                    if field in invoice and invoice[field] is not None:
+                        montant_ht = self._safe_float_conversion(invoice[field])
+                        ht_source = field
+                        logger.info(f"Montant HT trouvé via champ direct {field}: {montant_ht}")
+                        break
+                        
+            if montant_ttc == 0.0:
+                for field in direct_ttc_fields:
+                    if field in invoice and invoice[field] is not None:
+                        montant_ttc = self._safe_float_conversion(invoice[field])
+                        ttc_source = field
+                        logger.info(f"Montant TTC trouvé via champ direct {field}: {montant_ttc}")
+                        break
         
-        # Méthode 2: Champs directs en racine
-        direct_ht_fields = ["total_amount_without_taxes", "totalHT", "preTaxAmount", "baseHT"]
-        direct_ttc_fields = ["total_amount_with_taxes", "totalTTC", "totalAmount", "finalAmount"]
-        
-        if montant_ht == 0.0:
-            for field in direct_ht_fields:
-                if field in invoice and invoice[field] is not None:
-                    montant_ht = self._safe_float_conversion(invoice[field])
-                    ht_source = field
-                    logger.info(f"Montant HT trouvé via champ direct {field}: {montant_ht}")
-                    break
-                    
-        if montant_ttc == 0.0:
-            for field in direct_ttc_fields:
-                if field in invoice and invoice[field] is not None:
-                    montant_ttc = self._safe_float_conversion(invoice[field])
-                    ttc_source = field
-                    logger.info(f"Montant TTC trouvé via champ direct {field}: {montant_ttc}")
-                    break
-        
-        # Méthode 3: Calcul à partir des lignes d'achat
+        # Méthode commune: Calcul à partir des lignes d'achat
         if (montant_ht == 0.0 or montant_ttc == 0.0) and "rows" in invoice and isinstance(invoice["rows"], list):
             logger.info(f"Calcul des montants à partir des lignes ({len(invoice['rows'])} lignes)")
             ht_total = 0.0
@@ -264,7 +319,13 @@ class AirtableAPI:
         # --- Récupération du statut ---
         status = ""
         status_field_used = None
-        status_fields = ["status", "doc_status", "state", "documentStatus"]
+        
+        if format_v1:
+            # Format V1
+            status_fields = ["step_hex", "doc_status", "status"]
+        else:
+            # Format OCR/V2
+            status_fields = ["status", "doc_status", "state", "documentStatus"]
         
         for field in status_fields:
             if field in invoice and invoice[field]:
@@ -281,7 +342,14 @@ class AirtableAPI:
             "created": "Créée",
             "validated": "Validée",
             "canceled": "Annulée",
-            "pending": "En attente"
+            "pending": "En attente",
+            # Codes spécifiques V1
+            "created": "Créée",
+            "accepted": "Acceptée",
+            "sent": "Envoyée",
+            "partpaid": "Partiellement payée",
+            "paid": "Payée",
+            "cancelled": "Annulée"
         }
         
         # Appliquer le mapping si disponible
@@ -310,7 +378,11 @@ class AirtableAPI:
         # Construction de l'URL web Sellsy avec l'ID
         web_url = ""
         if invoice_id:
-            web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
+            # Format différent selon API V1 ou V2
+            if format_v1:
+                web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
+            else:
+                web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
             logger.info(f"URL Sellsy construite: {web_url}")
         
         # Construction du résultat final
@@ -341,7 +413,13 @@ class AirtableAPI:
             if value is None:
                 return 0.0
             if isinstance(value, str):
-                clean_value = re.sub(r'[^\d.]', '', value)
+                clean_value = re.sub(r'[^\d.,]', '', value)
+                # Gestion des séparateurs décimaux français et internationaux
+                clean_value = clean_value.replace(',', '.')
+                # S'il y a plusieurs points, ne garder que le dernier
+                if clean_value.count('.') > 1:
+                    parts = clean_value.split('.')
+                    clean_value = ''.join(parts[:-1]) + '.' + parts[-1]
                 if not clean_value:
                     logger.warning(f"Conversion en float - chaîne nettoyée vide: '{value}' -> ''")
                     return 0.0
