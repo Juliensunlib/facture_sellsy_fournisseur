@@ -20,7 +20,7 @@ logger = logging.getLogger("sellsy_supplier_api")
 class SellsySupplierAPI:
     def __init__(self):
         self.api_url = SELLSY_V2_API_URL
-        self.token_url = "https://api.sellsy.com/oauth2/token"
+        self.token_url = "https://login.sellsy.com/oauth2/access-tokens"
         self.access_token = self.get_access_token()
 
         if not self.access_token:
@@ -31,23 +31,17 @@ class SellsySupplierAPI:
     def get_access_token(self) -> Optional[str]:
         logger.info("🔐 Récupération du token OAuth2 Sellsy")
         try:
-            # Modification de l'URL
-            self.token_url = "https://login.sellsy.com/oauth2/access-tokens"
-            
-            # Authentification avec Basic Auth
             auth_string = f"{SELLSY_CLIENT_ID}:{SELLSY_CLIENT_SECRET}"
             auth_bytes = auth_string.encode('ascii')
             auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
-            
+
             headers = {
                 "Authorization": f"Basic {auth_b64}",
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json"
             }
-            
-            # Format des données simplifié
+
             data = "grant_type=client_credentials"
-            
             response = requests.post(self.token_url, headers=headers, data=data)
 
             if response.status_code == 200:
@@ -87,20 +81,21 @@ class SellsySupplierAPI:
             logger.error(f"Exception API POST: {e}")
         return None
 
-    def get_purchase_invoices(self, limit: int = 100) -> List[Dict]:
-        logger.info("📥 Récupération des factures d'achat OCR...")
+    def search_purchase_invoices(self, limit: int = 100) -> List[Dict]:
+        logger.info("📥 Recherche des factures d'achat OCR avec filtre (POST)...")
         offset = 0
         invoices = []
 
         while len(invoices) < limit:
-            params = {
+            payload = {
+                "filters": {},
                 "limit": min(limit - len(invoices), 100),
                 "offset": offset,
                 "order": "created_at",
                 "direction": "desc"
             }
 
-            data = self._make_get("/ocr/pur-invoice", params=params)
+            data = self._make_post("/ocr/pur-invoice/search", json_data=payload)
             if not data or "data" not in data:
                 break
 
