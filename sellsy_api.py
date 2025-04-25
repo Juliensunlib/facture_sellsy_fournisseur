@@ -31,7 +31,7 @@ class SellsySupplierAPI:
         os.makedirs(PDF_STORAGE_DIR, exist_ok=True)
 
     def get_access_token(self) -> Optional[str]:
-        logger.info("🔐 Récupération du token OAuth2 Sellsy")
+        logger.info("\ud83d\udd10 R\u00e9cup\u00e9ration du token OAuth2 Sellsy")
         try:
             auth_string = f"{SELLSY_CLIENT_ID}:{SELLSY_CLIENT_SECRET}"
             auth_bytes = auth_string.encode('ascii')
@@ -52,7 +52,7 @@ class SellsySupplierAPI:
             else:
                 logger.error(f"Erreur OAuth2 : {response.status_code} {response.text}")
         except requests.RequestException as e:
-            logger.error(f"Erreur de requête OAuth2 : {e}")
+            logger.error(f"Erreur de requ\u00eate OAuth2 : {e}")
         return None
 
     def _make_get(self, endpoint: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
@@ -85,7 +85,7 @@ class SellsySupplierAPI:
 
     def _make_v1_request(self, method: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
         """
-        Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
+        Effectue une requ\u00eate vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
         """
         headers = {
             "Authorization": f"Bearer {self.access_token}",
@@ -93,37 +93,36 @@ class SellsySupplierAPI:
         }
 
         payload = {
-            "method": method,
-            "io_mode": "json",
-            "do_in": json.dumps(params)
+            "request": json.dumps({
+                "method": method,
+                "params": params
+            }),
+            "io_mode": "json"
         }
 
-        logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
+        logger.info(f"Requ\u00eate API v1 vers {self.api_v1_url} - M\u00e9thode: {method}")
         logger.info(f"Payload: {json.dumps(payload, indent=2)}")
 
         try:
             response = requests.post(self.api_v1_url, headers=headers, data=payload)
-            logger.info(f"Code de statut de la réponse: {response.status_code}")
+            logger.info(f"Code de statut de la r\u00e9ponse: {response.status_code}")
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")
+                logger.info(f"R\u00e9ponse r\u00e9ussie: {json.dumps(result, indent=2)[:500]}...")
                 return result
 
             logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
         except requests.RequestException as e:
             logger.error(f"Exception API v1: {e}")
         except json.JSONDecodeError as e:
-            logger.error(f"Erreur de décodage JSON: {e}")
-            logger.error(f"Contenu de la réponse: {response.text[:500]}...")
+            logger.error(f"Erreur de d\u00e9codage JSON: {e}")
+            logger.error(f"Contenu de la r\u00e9ponse: {response.text[:500]}...")
 
         return None
 
     def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
-        """
-        Récupère les factures fournisseur via l'API v1 en utilisant purchaseGetList
-        """
-        logger.info("📥 Recherche des factures fournisseur via API v1...")
+        logger.info("\ud83d\udcc5 Recherche des factures fournisseur via API v1...")
 
         params = {
             "pagination": {
@@ -146,7 +145,7 @@ class SellsySupplierAPI:
             response = self._make_v1_request("Purchase.getList", params)
 
             if not response or response.get("status") != "success" or "response" not in response:
-                logger.error("Erreur lors de la récupération des factures fournisseur")
+                logger.error("Erreur lors de la r\u00e9cup\u00e9ration des factures fournisseur")
                 break
 
             data = response["response"]
@@ -164,14 +163,11 @@ class SellsySupplierAPI:
                 invoices = invoices[:limit]
                 break
 
-        logger.info(f"📋 {len(invoices)} factures fournisseur trouvées")
+        logger.info(f"\ud83d\udccb {len(invoices)} factures fournisseur trouv\u00e9es")
         return invoices
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        """
-        Récupère les détails d'une facture fournisseur via l'API v1
-        """
-        logger.info(f"🔍 Détails de la facture fournisseur {invoice_id}")
+        logger.info(f"\ud83d\udd0d D\u00e9tails de la facture fournisseur {invoice_id}")
 
         params = {
             "id": invoice_id
@@ -180,10 +176,7 @@ class SellsySupplierAPI:
         return self._make_v1_request("Purchase.getOne", params)
 
     def search_purchase_invoices(self, limit: int = 100) -> List[Dict]:
-        """
-        Recherche les factures d'achat OCR (méthode existante)
-        """
-        logger.info("📥 Recherche des factures d'achat OCR avec filtre (POST)...")
+        logger.info("\ud83d\udcc5 Recherche des factures d'achat OCR avec filtre (POST)...")
         offset = 0
         invoices = []
 
@@ -209,11 +202,11 @@ class SellsySupplierAPI:
         return invoices[:limit]
 
     def get_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"🔍 Détails de la facture OCR {invoice_id}")
+        logger.info(f"\ud83d\udd0d D\u00e9tails de la facture OCR {invoice_id}")
         return self._make_get(f"/ocr/pur-invoice/{invoice_id}")
 
     def download_invoice_pdf(self, pdf_url: str, invoice_id: str) -> Optional[str]:
-        logger.info(f"⬇️ Téléchargement du PDF pour la facture {invoice_id}")
+        logger.info(f"\u2b07\ufe0f T\u00e9l\u00e9chargement du PDF pour la facture {invoice_id}")
         try:
             headers = {
                 "Authorization": f"Bearer {self.access_token}"
@@ -223,19 +216,16 @@ class SellsySupplierAPI:
                 file_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
                 with open(file_path, "wb") as f:
                     f.write(response.content)
-                logger.info(f"📄 PDF enregistré: {file_path}")
+                logger.info(f"\ud83d\udcc4 PDF enregistr\u00e9: {file_path}")
                 return file_path
             else:
-                logger.error(f"Erreur téléchargement PDF: {response.status_code}")
+                logger.error(f"Erreur t\u00e9l\u00e9chargement PDF: {response.status_code}")
         except requests.RequestException as e:
-            logger.error(f"Erreur lors du téléchargement du PDF: {e}")
+            logger.error(f"Erreur lors du t\u00e9l\u00e9chargement du PDF: {e}")
         return None
 
     def get_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
-        """
-        Récupère le PDF d'une facture fournisseur via l'API v1
-        """
-        logger.info(f"📄 Récupération du PDF pour la facture fournisseur {invoice_id}")
+        logger.info(f"\ud83d\udcc4 R\u00e9cup\u00e9ration du PDF pour la facture fournisseur {invoice_id}")
 
         params = {
             "docid": invoice_id,
