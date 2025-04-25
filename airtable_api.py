@@ -553,29 +553,60 @@ class AirtableAPI:
             return None
 
     def insert_or_update_supplier_invoice(self, invoice_data: Dict, pdf_path: Optional[str] = None) -> Optional[str]:
-        """
-        Insère ou met à jour une facture fournisseur dans Airtable avec son PDF si disponible
+    """
+    Insère ou met à jour une facture fournisseur dans Airtable avec son PDF si disponible
+    
+    Args:
+        invoice_data: Données de la facture formatées pour Airtable
+        pdf_path: Chemin vers le fichier PDF (optionnel)
         
-        Args:
-            invoice_data: Données de la facture formatées pour Airtable
-            pdf_path: Chemin vers le fichier PDF (optionnel)
-            
-        Returns:
-            ID de l'enregistrement Airtable ou None en cas d'erreur
-        """
-        if not invoice_data:
-            logger.error("Données de facture fournisseur invalides, impossible d'insérer/mettre à jour")
-            return None
-            
-        sellsy_id = str(invoice_data.get("ID_Facture_Fournisseur", ""))
-        if not sellsy_id:
-            logger.error("ID Sellsy manquant dans les données, impossible d'insérer/mettre à jour")
-            return None
+    Returns:
+        ID de l'enregistrement Airtable ou None en cas d'erreur
+    """
+    if not invoice_data:
+        logger.error("Données de facture fournisseur invalides, impossible d'insérer/mettre à jour")
+        return None
         
-        try:
-            # Préparation des données
-            airtable_data = invoice_data.copy()
-            
-            # Traitement du PDF si disponible
-            if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
-                logger.info(f"Ajout du PDF pour
+    sellsy_id = str(invoice_data.get("ID_Facture_Fournisseur", ""))
+    if not sellsy_id:
+        logger.error("ID Sellsy manquant dans les données, impossible d'insérer/mettre à jour")
+        return None
+    
+    try:
+        # Préparation des données
+        airtable_data = invoice_data.copy()
+        
+        # Traitement du PDF si disponible
+        if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+            logger.info(f"Ajout du PDF pour la facture {sellsy_id}")
+            pdf_base64 = self.encode_file_to_base64(pdf_path)
+            if pdf_base64:
+                # Format pour les attachements Airtable
+                filename = os.path.basename(pdf_path)
+                airtable_data["Fichier_PDF"] = [
+                    {
+                        "url": f"data:application/pdf;base64,{pdf_base64}",
+                        "filename": filename
+                    }
+                ]
+        
+        # Vérifier si la facture existe déjà
+        existing_record = self.find_supplier_invoice_by_id(sellsy_id)
+        
+        if existing_record:
+            # Mise à jour
+            record_id = existing_record["id"]
+            logger.info(f"Mise à jour de la facture existante {sellsy_id} (record {record_id})")
+            self.table.update(record_id, airtable_data)
+            return record_id
+        else:
+            # Création
+            logger.info(f"Création d'une nouvelle facture {sellsy_id}")
+            response = self.table.create(airtable_data)
+            record_id = response.get("id")
+            logger.info(f"Facture créée avec ID Airtable: {record_id}")
+            return record_id
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de l'insertion/mise à jour de la facture {sellsy_id}: {e}")
+        return None
