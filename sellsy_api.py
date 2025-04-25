@@ -84,28 +84,40 @@ class SellsySupplierAPI:
         return None
 
     def _make_v1_request(self, method: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
-        """
-        Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
-        """
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
+    """
+    Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
+    """
+    headers = {
+        "Authorization": f"Bearer {self.access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Format spécifique pour les requêtes API v1
+    payload = {
+        "method": method,
+        "params": params
+    }
+    
+    logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
+    logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+    
+    try:
+        response = requests.post(self.api_v1_url, headers=headers, json=payload)
+        logger.info(f"Code de statut de la réponse: {response.status_code}")
         
-        # Format spécifique pour les requêtes API v1
-        payload = {
-            "method": method,
-            "params": params
-        }
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")  # Limiter à 500 caractères
+            return result
         
-        try:
-            response = requests.post(self.api_v1_url, headers=headers, json=payload)
-            if response.status_code == 200:
-                return response.json()
-            logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
-        except requests.RequestException as e:
-            logger.error(f"Exception API v1: {e}")
-        return None
+        logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
+    except requests.RequestException as e:
+        logger.error(f"Exception API v1: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Erreur de décodage JSON: {e}")
+        logger.error(f"Contenu de la réponse: {response.text[:500]}...")  # Limiter à 500 caractères
+    
+    return None
 
     def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
         """
