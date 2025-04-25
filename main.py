@@ -12,7 +12,7 @@ def sync_invoices(limit=1000, days=365):
 
     print(f"Récupération des factures d'achat (limite {limit}) sur les {days} derniers jours...")
 
-    invoices = sellsy.get_purchase_invoices(limit=limit)
+    invoices = sellsy.search_purchase_invoices(limit=limit)
 
     if not invoices:
         print("Aucune facture trouvée.")
@@ -60,14 +60,10 @@ def sync_invoices(limit=1000, days=365):
     print("Synchronisation terminée.")
 
 def sync_supplier_invoices(limit=1000):
-    """
-    Synchronise les factures fournisseur dans Airtable (utilise sync_invoices avec un limit)
-    """
     print("Utilisation de la fonction sync_invoices avec limit.")
     sync_invoices(limit=limit)
 
 def start_webhook_server(host="0.0.0.0", port=8000):
-    """Démarre le serveur webhook"""
     print(f"Démarrage du serveur webhook sur {host}:{port}")
     uvicorn.run(app, host=host, port=port)
 
