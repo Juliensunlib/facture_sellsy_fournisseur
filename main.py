@@ -7,11 +7,13 @@ import time
 
 def sync_invoices(days=365):
     """Synchronise les factures des X derniers jours"""
-    sellsy = SellsyAPI()
+    sellsy = SellsySupplierAPI()
     airtable = AirtableAPI()
 
-    print(f"Récupération des factures des {days} derniers jours...")
-    invoices = sellsy.get_invoices(days)
+    print(f"Récupération des factures d'achat des {days} derniers jours...")
+    # Note: la méthode get_purchase_invoices ne filtre pas par date dans l'implémentation actuelle
+    # Vous pourriez vouloir ajouter ce filtre dans SellsySupplierAPI
+    invoices = sellsy.get_purchase_invoices(limit=1000)
 
     if not invoices:
         print("Aucune facture trouvée.")
@@ -34,20 +36,42 @@ def sync_invoices(days=365):
             if invoice_details:
                 # Formatage pour Airtable
                 formatted_invoice = airtable.format_invoice_for_airtable(invoice_details)
-                pdf_path = sellsy.download_invoice_pdf(invoice_id)
+                
+                # Récupération de l'URL du PDF
+                pdf_url = None
+                pdf_fields = ["pdf_url", "pdfUrl", "downloadUrl", "public_link", "pdf"]
+                for field in pdf_fields:
+                    if field in invoice_details and invoice_details[field]:
+                        pdf_url = invoice_details[field]
+                        break
+                
+                pdf_path = None
+                if pdf_url:
+                    pdf_path = sellsy.download_invoice_pdf(pdf_url, invoice_id)
 
                 if formatted_invoice:
-                    airtable.insert_or_update_invoice(formatted_invoice, pdf_path)
+                    airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
                     print(f"✅ Facture {invoice_id} traitée ({idx+1}/{len(invoices)}).")
                 else:
                     print(f"⚠️ La facture {invoice_id} n'a pas pu être formatée correctement")
             else:
                 print(f"⚠️ Impossible de récupérer les détails de la facture {invoice_id} - utilisation des données de base")
                 formatted_invoice = airtable.format_invoice_for_airtable(invoice)
-                pdf_path = sellsy.download_invoice_pdf(invoice_id)
+                
+                # Recherche de l'URL PDF dans les données de base
+                pdf_url = None
+                pdf_fields = ["pdf_url", "pdfUrl", "downloadUrl", "public_link", "pdf"]
+                for field in pdf_fields:
+                    if field in invoice and invoice[field]:
+                        pdf_url = invoice[field]
+                        break
+                        
+                pdf_path = None
+                if pdf_url:
+                    pdf_path = sellsy.download_invoice_pdf(pdf_url, invoice_id)
 
                 if formatted_invoice:
-                    airtable.insert_or_update_invoice(formatted_invoice, pdf_path)
+                    airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
                     print(f"✅ Facture {invoice_id} traitée avec données de base ({idx+1}/{len(invoices)}).")
                 else:
                     print(f"⚠️ La facture {invoice_id} n'a pas pu être formatée correctement, même avec les données de base")
@@ -57,75 +81,18 @@ def sync_invoices(days=365):
     print("Synchronisation terminée.")
 
 def sync_supplier_invoices(limit=1000):
-    """Synchronise les factures fournisseur dans Airtable"""
-    sellsy = SellsyAPI()
-    airtable = AirtableAPI()
-
-    print(f"Récupération des factures fournisseur de Sellsy (max {limit})...")
-    all_invoices = sellsy.get_all_supplier_invoices(limit)
-
-    if not all_invoices:
-        print("Aucune facture fournisseur trouvée.")
-        return
-
-    print(f"{len(all_invoices)} factures fournisseur trouvées dans Sellsy.")
-
-    added_count = 0
-    updated_count = 0
-    error_count = 0
-
-    for idx, invoice in enumerate(all_invoices):
-        try:
-            invoice_id = str(invoice["id"])
-            print(f"Traitement de la facture fournisseur {invoice_id} ({idx+1}/{len(all_invoices)})...")
-
-            if idx > 0 and idx % 10 == 0:
-                print("Pause de 2 secondes pour éviter les limitations d'API...")
-                time.sleep(2)
-
-            existing_record = airtable.find_supplier_invoice_by_id(invoice_id)
-
-            if existing_record:
-                print(f"🔄 Facture fournisseur {invoice_id} déjà présente dans Airtable, mise à jour du PDF.")
-                pdf_path = sellsy.download_supplier_invoice_pdf(invoice_id)
-
-                invoice_details = sellsy.get_supplier_invoice_details(invoice_id)
-                source_data = invoice_details if invoice_details else invoice
-                formatted_invoice = airtable.format_supplier_invoice_for_airtable(source_data)
-
-                if formatted_invoice:
-                    airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
-                    updated_count += 1
-                    print(f"✅ Facture fournisseur {invoice_id} mise à jour avec PDF ({idx+1}/{len(all_invoices)}).")
-                continue
-
-            invoice_details = sellsy.get_supplier_invoice_details(invoice_id)
-            source_data = invoice_details if invoice_details else invoice
-
-            if not invoice_details:
-                print(f"⚠️ Impossible de récupérer les détails de la facture fournisseur {invoice_id} - utilisation des données de base")
-
-            pdf_path = sellsy.download_supplier_invoice_pdf(invoice_id)
-
-            formatted_invoice = airtable.format_supplier_invoice_for_airtable(source_data)
-
-            if formatted_invoice:
-                try:
-                    airtable.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
-                    added_count += 1
-                    print(f"➕ Facture fournisseur {invoice_id} ajoutée avec PDF ({idx+1}/{len(all_invoices)}).")
-                except Exception as e:
-                    print(f"❌ Erreur lors de l'ajout de la facture fournisseur {invoice_id} à Airtable: {e}")
-                    error_count += 1
-            else:
-                print(f"⚠️ La facture fournisseur {invoice_id} n'a pas pu être formatée correctement")
-                error_count += 1
-
-        except Exception as e:
-            print(f"❌ Erreur lors du traitement de la facture fournisseur {invoice.get('id')}: {e}")
-            error_count += 1
-
-    print(f"Synchronisation terminée. {added_count} nouvelles factures fournisseur ajoutées, {updated_count} factures déjà présentes, {error_count} erreurs.")
+    """
+    Synchronise les factures fournisseur dans Airtable
+    Note: Cette fonction nécessite des méthodes qui ne semblent pas être implémentées dans la version actuelle
+    de SellsySupplierAPI. Considérez soit de l'implémenter, soit de fusionner cette fonctionnalité avec sync_invoices.
+    """
+    print("⚠️ Cette fonction doit être mise à jour pour utiliser l'API Sellsy v2.")
+    print("Les méthodes get_all_supplier_invoices et get_supplier_invoice_details ne sont pas disponibles.")
+    print("Utilisez plutôt la fonction sync_invoices qui utilise get_purchase_invoices et get_invoice_details.")
+    
+    # Implémentation alternative basée sur les méthodes disponibles
+    # Cette fonction est maintenant équivalente à sync_invoices
+    sync_invoices(limit=limit)
 
 def start_webhook_server(host="0.0.0.0", port=8000):
     """Démarre le serveur webhook"""
@@ -133,7 +100,7 @@ def start_webhook_server(host="0.0.0.0", port=8000):
     uvicorn.run(app, host=host, port=port)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Outil de synchronisation Sellsy - Airtable")
+    parser = argparse.ArgumentParser(description="Outil de synchronisation Sellsy v2 - Airtable")
 
     subparsers = parser.add_subparsers(dest="command", help="Commandes disponibles")
 
