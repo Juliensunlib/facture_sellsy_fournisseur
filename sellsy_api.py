@@ -89,21 +89,20 @@ class SellsySupplierAPI:
         """
         headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/x-www-form-urlencoded"
         }
 
         payload = {
             "method": method,
-            "params": params,
             "io_mode": "json",
-            "do_in": "json"
+            "do_in": json.dumps(params)
         }
 
         logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
         logger.info(f"Payload: {json.dumps(payload, indent=2)}")
 
         try:
-            response = requests.post(self.api_v1_url, headers=headers, json=payload)
+            response = requests.post(self.api_v1_url, headers=headers, data=payload)
             logger.info(f"Code de statut de la réponse: {response.status_code}")
 
             if response.status_code == 200:
