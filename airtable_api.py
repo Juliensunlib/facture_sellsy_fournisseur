@@ -41,7 +41,11 @@ class AirtableAPI:
                 "archived": "Archivé",
                 "new": "Nouveau",
                 "received": "Reçu",
-                "ordered": "Commandé"
+                "ordered": "Commandé",
+                "due": "A régler",
+                "payinprogress": "Paiement partiel",
+                "late": "Retard",
+                "cancelled": "Annulée"
             }
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation de la connexion Airtable: {e}")
