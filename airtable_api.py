@@ -68,20 +68,38 @@ class AirtableAPI:
         supplier_name = ""
         
         if format_v1:
-            # Format V1
-            if "thirdname" in invoice:
+            # Format V1 - Amélioration de la recherche du fournisseur
+            if "thirdname" in invoice and invoice["thirdname"]:
                 supplier_name = invoice.get("thirdname", "")
                 supplier_id = str(invoice.get("thirdid", ""))
                 logger.info(f"Fournisseur trouvé via thirdname: {supplier_name} (ID: {supplier_id})")
-            elif "corp_name" in invoice:
+            elif "corp_name" in invoice and invoice["corp_name"]:
                 supplier_name = invoice.get("corp_name", "")
                 supplier_id = str(invoice.get("thirdid", ""))
                 logger.info(f"Fournisseur trouvé via corp_name: {supplier_name} (ID: {supplier_id})")
+            elif "thirdid" in invoice and invoice["thirdid"]:
+                # Recherche plus poussée via thirdid si disponible
+                supplier_id = str(invoice.get("thirdid", ""))
+                # Chercher le nom dans d'autres champs possibles
+                for field in ["thirdident", "subject", "third", "thirddisplayedname"]:
+                    if field in invoice and invoice[field]:
+                        supplier_name = str(invoice[field])
+                        logger.info(f"Fournisseur trouvé via {field}: {supplier_name} (ID: {supplier_id})")
+                        break
+                if not supplier_name and supplier_id:
+                    supplier_name = f"Fournisseur #{supplier_id}"
+                    logger.info(f"Utilisation de l'ID comme nom: {supplier_name}")
+            # Recherche de données dans les structures imbriquées
+            elif "third" in invoice and isinstance(invoice["third"], dict):
+                if "name" in invoice["third"]:
+                    supplier_name = invoice["third"]["name"]
+                    supplier_id = str(invoice["third"].get("id", ""))
+                    logger.info(f"Fournisseur trouvé via third.name: {supplier_name} (ID: {supplier_id})")
         else:
             # Format OCR/V2
             if "related" in invoice and isinstance(invoice["related"], list):
                 for related in invoice["related"]:
-                    if related.get("type") in ["individual", "corporation"]:
+                    if related.get("type") in ["individual", "corporation", "supplier", "third"]:
                         supplier_id = str(related.get("id", ""))
                         supplier_name = related.get("name", "")
                         logger.info(f"Fournisseur trouvé via related: {supplier_name} (ID: {supplier_id})")
@@ -94,6 +112,27 @@ class AirtableAPI:
                 supplier_id = str(invoice["supplier"].get("id", ""))
                 supplier_name = invoice["supplier"].get("name", "")
                 logger.info(f"Fournisseur trouvé via supplier: {supplier_name} (ID: {supplier_id})")
+        
+        # Recherche étendue du fournisseur si toujours vide
+        if not supplier_name:
+            logger.info("Recherche étendue du fournisseur...")
+            for field in ["thirdname", "corporation", "corp_name", "corpname", "supplier_name", "supplierName"]:
+                if field in invoice and invoice[field]:
+                    supplier_name = str(invoice[field])
+                    logger.info(f"Fournisseur trouvé via recherche étendue ({field}): {supplier_name}")
+                    break
+            
+            # Recherche dans les sous-objets
+            if not supplier_name:
+                for obj_name in ["supplier", "third", "corporation", "contact"]:
+                    if obj_name in invoice and isinstance(invoice[obj_name], dict):
+                        for name_field in ["name", "fullname", "displayName", "title"]:
+                            if name_field in invoice[obj_name] and invoice[obj_name][name_field]:
+                                supplier_name = str(invoice[obj_name][name_field])
+                                if "id" in invoice[obj_name] and not supplier_id:
+                                    supplier_id = str(invoice[obj_name]["id"])
+                                logger.info(f"Fournisseur trouvé dans {obj_name}.{name_field}: {supplier_name}")
+                                break
         
         # Fallback pour le nom du fournisseur
         if not supplier_name and supplier_id:
@@ -123,8 +162,11 @@ class AirtableAPI:
             original_date = created_date
             # Conversion en format standard YYYY-MM-DD
             if isinstance(created_date, str):
+                # Si c'est une date avec heure (format datetime)
+                if " " in created_date:
+                    created_date = created_date.split(" ")[0]
                 # Si format ISO avec T
-                if "T" in created_date:
+                elif "T" in created_date:
                     created_date = created_date.split("T")[0]
                 # Format timestamp avec /
                 elif "/" in created_date:
@@ -140,9 +182,19 @@ class AirtableAPI:
                 # Vérifier et nettoyer le format de date
                 if not re.match(r'^\d{4}-\d{2}-\d{2}$', created_date):
                     try:
-                        # Tentative de conversion
-                        date_obj = datetime.datetime.strptime(created_date, "%Y-%m-%d")
-                        created_date = date_obj.strftime("%Y-%m-%d")
+                        # Tentative de conversion - pour le format "YYYY-MM-DD HH:MM:SS"
+                        if " " in original_date:
+                            date_obj = datetime.datetime.strptime(original_date, "%Y-%m-%d %H:%M:%S")
+                            created_date = date_obj.strftime("%Y-%m-%d")
+                        else:
+                            # Autres formats de date possibles
+                            for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"]:
+                                try:
+                                    date_obj = datetime.datetime.strptime(original_date, fmt)
+                                    created_date = date_obj.strftime("%Y-%m-%d")
+                                    break
+                                except ValueError:
+                                    continue
                     except ValueError:
                         # En cas d'échec, utiliser la date actuelle
                         logger.warning(f"Format de date invalide '{created_date}', utilisation de la date actuelle")
@@ -186,36 +238,37 @@ class AirtableAPI:
         ht_source = None
         ttc_source = None
         
+        # --- FORMAT V1: Récupération améliorée des montants HT et TTC ---
         if format_v1:
-            # Format V1
-            if "totalHT" in invoice:
-                montant_ht = self._safe_float_conversion(invoice["totalHT"])
-                ht_source = "totalHT"
-                logger.info(f"Montant HT trouvé via totalHT: {montant_ht}")
-                
-            if "totalTTC" in invoice:
-                montant_ttc = self._safe_float_conversion(invoice["totalTTC"])
-                ttc_source = "totalTTC"
-                logger.info(f"Montant TTC trouvé via totalTTC: {montant_ttc}")
-                
-            # Alternative: amounts
-            if montant_ht == 0.0 and "amount_base" in invoice:
-                montant_ht = self._safe_float_conversion(invoice["amount_base"])
-                ht_source = "amount_base"
-                logger.info(f"Montant HT trouvé via amount_base: {montant_ht}")
-                
-            if montant_ttc == 0.0 and "amount_total" in invoice:
-                montant_ttc = self._safe_float_conversion(invoice["amount_total"])
-                ttc_source = "amount_total"
-                logger.info(f"Montant TTC trouvé via amount_total: {montant_ttc}")
+            # Vérification des champs directs simples
+            direct_ht_fields = ["totalAmountTaxesFree", "rowsAmountAllInc", "rowsAmount", "totalHT", "amount_base"]
+            direct_ttc_fields = ["totalAmount", "total", "totalTTC", "amount_total"]
+            
+            # Recherche HT
+            for field in direct_ht_fields:
+                if field in invoice and invoice[field] is not None:
+                    montant_ht = self._safe_float_conversion(invoice[field])
+                    ht_source = field
+                    logger.info(f"Montant HT trouvé via {field}: {montant_ht}")
+                    break
+                    
+            # Recherche TTC
+            for field in direct_ttc_fields:
+                if field in invoice and invoice[field] is not None:
+                    montant_ttc = self._safe_float_conversion(invoice[field])
+                    ttc_source = field
+                    logger.info(f"Montant TTC trouvé via {field}: {montant_ttc}")
+                    break
         else:
-            # Format OCR/V2: Méthode 1 - Extraction structurée des montants depuis "amounts"
+            # --- FORMAT OCR/V2: Récupération améliorée des montants ---
+            # Méthode 1 - Recherche dans la structure "amounts"
             if "amounts" in invoice and isinstance(invoice["amounts"], dict):
                 amounts = invoice["amounts"]
-                logger.info(f"Structure amounts trouvée: {json.dumps(amounts, indent=2)}")
+                logger.info(f"Structure amounts trouvée")
                 
-                # Montant HT
-                ht_keys = ["totalAmountWithoutVat", "total_excluding_tax", "baseHT", "totalHT", "preTax"]
+                # Montant HT - recherche étendue dans les clés possibles
+                ht_keys = ["totalAmountWithoutVat", "total_excluding_tax", "baseHT", "totalHT", "preTax", 
+                          "amount_excl_tax", "amount_ht", "net_amount"]
                 for key in ht_keys:
                     if key in amounts and amounts[key] is not None:
                         montant_ht = self._safe_float_conversion(amounts[key])
@@ -223,8 +276,9 @@ class AirtableAPI:
                         logger.info(f"Montant HT trouvé via amounts.{key}: {montant_ht}")
                         break
                 
-                # Montant TTC
-                ttc_keys = ["total_including_tax", "totalAmountWithTaxes", "totalTTC", "total"]
+                # Montant TTC - recherche étendue
+                ttc_keys = ["total_including_tax", "totalAmountWithTaxes", "totalTTC", "total",
+                           "amount_incl_tax", "amount_ttc", "gross_amount"]
                 for key in ttc_keys:
                     if key in amounts and amounts[key] is not None:
                         montant_ttc = self._safe_float_conversion(amounts[key])
@@ -233,8 +287,10 @@ class AirtableAPI:
                         break
             
             # Format OCR/V2: Méthode 2 - Champs directs en racine
-            direct_ht_fields = ["total_amount_without_taxes", "totalHT", "preTaxAmount", "baseHT"]
-            direct_ttc_fields = ["total_amount_with_taxes", "totalTTC", "totalAmount", "finalAmount"]
+            direct_ht_fields = ["total_amount_without_taxes", "totalHT", "preTaxAmount", "baseHT", 
+                               "amount_excl_tax", "net_amount", "totalAmountTaxesFree"]
+            direct_ttc_fields = ["total_amount_with_taxes", "totalTTC", "totalAmount", "finalAmount", 
+                                "amount_incl_tax", "gross_amount", "total"]
             
             if montant_ht == 0.0:
                 for field in direct_ht_fields:
@@ -258,7 +314,7 @@ class AirtableAPI:
             ht_total = 0.0
             for i, row in enumerate(invoice["rows"]):
                 if isinstance(row, dict):
-                    logger.info(f"Ligne {i+1}: {json.dumps(row, indent=2)}")
+                    logger.debug(f"Analyse ligne {i+1}")
                     
                     row_amount = 0.0
                     # Structure 1: montant unitaire * quantité
@@ -273,8 +329,12 @@ class AirtableAPI:
                     # Structure 4: totalAmount
                     elif "totalAmount" in row:
                         row_amount = self._safe_float_conversion(row["totalAmount"])
+                    # Structure 5: prix * quantité
+                    elif "price" in row and "quantity" in row:
+                        row_amount = self._safe_float_conversion(row["price"]) * self._safe_float_conversion(row["quantity"])
                     
                     ht_total += row_amount
+                    logger.debug(f"  Montant ligne: {row_amount}")
             
             if montant_ht == 0.0 and ht_total > 0:
                 montant_ht = ht_total
@@ -286,7 +346,7 @@ class AirtableAPI:
             default_tax_rate = 20.0  # Taux de TVA standard
             
             # Chercher un taux de TVA explicite
-            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate"]:
+            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate", "tva", "vat", "taxPercent"]:
                 if field in invoice and invoice[field] is not None:
                     default_tax_rate = self._safe_float_conversion(invoice[field])
                     logger.info(f"Taux TVA trouvé via {field}: {default_tax_rate}%")
@@ -300,7 +360,7 @@ class AirtableAPI:
         if montant_ttc > 0 and montant_ht == 0.0:
             default_tax_rate = 20.0  # Taux de TVA standard
             
-            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate"]:
+            for field in ["tax_rate", "taxRate", "vatRate", "vat_rate", "tva", "vat", "taxPercent"]:
                 if field in invoice and invoice[field] is not None:
                     default_tax_rate = self._safe_float_conversion(invoice[field])
                     logger.info(f"Taux TVA trouvé via {field}: {default_tax_rate}%")
@@ -316,7 +376,7 @@ class AirtableAPI:
         
         logger.info(f"Montants finaux: HT={montant_ht} ({ht_source}), TTC={montant_ttc} ({ttc_source})")
         
-        # --- Récupération du statut ---
+        # --- Récupération du statut et mapping amélioré ---
         status = ""
         status_field_used = None
         
@@ -329,7 +389,7 @@ class AirtableAPI:
         
         for field in status_fields:
             if field in invoice and invoice[field]:
-                status = str(invoice[field])
+                status = str(invoice[field]).lower()  # Normalisation en minuscules
                 status_field_used = field
                 logger.info(f"Statut trouvé via {field}: {status}")
                 break
@@ -343,18 +403,19 @@ class AirtableAPI:
             "validated": "Validée",
             "canceled": "Annulée",
             "pending": "En attente",
-            # Codes spécifiques V1
-            "created": "Créée",
             "accepted": "Acceptée",
             "sent": "Envoyée",
             "partpaid": "Partiellement payée",
-            "paid": "Payée",
-            "cancelled": "Annulée"
+            "cancelled": "Annulée",
+            "ongoing": "En cours",
+            "ok": "Payée",  # Mapping spécifique pour le statut "ok"
+            "nok": "Non payée",
+            "done": "Terminée"
         }
         
         # Appliquer le mapping si disponible
         original_status = status
-        status = status_mapping.get(status.lower(), status)
+        status = status_mapping.get(status.lower(), status.capitalize())
         
         # Si statut toujours vide, définir un statut par défaut
         if not status:
@@ -366,7 +427,7 @@ class AirtableAPI:
         # --- Récupération du lien PDF ---
         pdf_url = ""
         pdf_url_field = None
-        pdf_fields = ["pdf_url", "pdfUrl", "downloadUrl", "public_link", "pdf"]
+        pdf_fields = ["pdf_url", "pdfUrl", "downloadUrl", "public_link", "pdf", "file_url", "fileUrl"]
         
         for field in pdf_fields:
             if field in invoice and invoice[field]:
@@ -492,65 +553,298 @@ class AirtableAPI:
             return None
 
     def insert_or_update_supplier_invoice(self, invoice_data: Dict, pdf_path: Optional[str] = None) -> Optional[str]:
-        """
-        Insère ou met à jour une facture fournisseur dans Airtable avec son PDF si disponible
+    """
+    Insère ou met à jour une facture fournisseur dans Airtable avec son PDF si disponible
+    
+    Args:
+        invoice_data: Données de la facture formatées pour Airtable
+        pdf_path: Chemin vers le fichier PDF (optionnel)
         
-        Args:
-            invoice_data: Données de la facture formatées pour Airtable
-            pdf_path: Chemin vers le fichier PDF (optionnel)
-            
-        Returns:
-            ID de l'enregistrement Airtable ou None en cas d'erreur
-        """
-        if not invoice_data:
-            logger.error("Données de facture fournisseur invalides, impossible d'insérer/mettre à jour")
-            return None
-            
-        sellsy_id = str(invoice_data.get("ID_Facture_Fournisseur", ""))
-        if not sellsy_id:
-            logger.error("ID Sellsy manquant dans les données, impossible d'insérer/mettre à jour")
-            return None
+    Returns:
+        ID de l'enregistrement Airtable ou None en cas d'erreur
+    """
+    if not invoice_data:
+        logger.error("Données de facture fournisseur invalides, impossible d'insérer/mettre à jour")
+        return None
         
-        try:
-            # Préparation des données
-            airtable_data = invoice_data.copy()
-            
-            # Traitement du PDF si disponible
-            if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
-                logger.info(f"Ajout du PDF pour la facture {sellsy_id}: {pdf_path}")
-
-                pdf_base64 = self.encode_file_to_base64(pdf_path)
-                if pdf_base64:
-                    airtable_data["PDF"] = [
-                        {
-                            "url": f"data:application/pdf;base64,{pdf_base64}",
-                            "filename": os.path.basename(pdf_path)
-                        }
-                    ]
-                else:
-                    logger.warning(f"Impossible d'encoder le PDF pour la facture {sellsy_id}")
-
-            # Recherche d'un enregistrement existant
-            existing_record = self.find_supplier_invoice_by_id(sellsy_id)
-
-            if existing_record:
-                record_id = existing_record["id"]
-                logger.info(f"Facture fournisseur {sellsy_id} déjà présente, mise à jour en cours...")
-                self.table.update(record_id, airtable_data)
-                logger.info(f"Facture fournisseur {sellsy_id} mise à jour avec succès.")
-                return record_id
+    sellsy_id = str(invoice_data.get("ID_Facture_Fournisseur", ""))
+    if not sellsy_id:
+        logger.error("ID Sellsy manquant dans les données, impossible d'insérer/mettre à jour")
+        return None
+    
+    try:
+        # Préparation des données
+        airtable_data = invoice_data.copy()
+        
+        # Traitement du PDF si disponible
+        if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+            logger.info(f"Ajout du PDF pour la facture {sellsy_id}")
+            pdf_content = self.encode_file_to_base64(pdf_path)
+            if pdf_content:
+                # Préparer le format pour Airtable - attachement PDF
+                filename = os.path.basename(pdf_path)
+                airtable_data["Pièce_jointe"] = [
+                    {
+                        "url": f"data:application/pdf;base64,{pdf_content}",
+                        "filename": filename
+                    }
+                ]
+                logger.info(f"Fichier PDF {filename} ajouté aux données")
             else:
-                logger.info(f"Facture fournisseur {sellsy_id} non trouvée, insertion en cours...")
-                record = self.table.create(airtable_data)
-                logger.info(f"Facture fournisseur {sellsy_id} ajoutée avec succès (ID: {record['id']}).")
-                return record['id']
-        except Exception as e:
-            logger.error(f"Erreur lors de l'insertion/mise à jour de la facture {sellsy_id}: {e}")
-            logger.debug(f"Clés dans les données: {list(invoice_data.keys()) if invoice_data else 'N/A'}")
-            return None
+                logger.warning(f"Impossible d'encoder le PDF {pdf_path}, pièce jointe ignorée")
+        
+        # Rechercher si la facture existe déjà
+        existing_record = self.find_supplier_invoice_by_id(sellsy_id)
+        
+        if existing_record:
+            # Mise à jour d'un enregistrement existant
+            record_id = existing_record["id"]
+            logger.info(f"Mise à jour de la facture existante {sellsy_id} (record Airtable: {record_id})")
+            
+            # Conserver les champs non présents dans les nouvelles données
+            for key, value in existing_record["fields"].items():
+                if key not in airtable_data and key not in ["ID_Facture_Fournisseur"]:  # Ne pas dupliquer l'ID
+                    airtable_data[key] = value
+                    logger.debug(f"Conservation du champ {key} existant")
+            
+            # Mise à jour de l'enregistrement
+            updated_record = self.table.update(record_id, airtable_data)
+            logger.info(f"Facture {sellsy_id} mise à jour avec succès")
+            return record_id
+        else:
+            # Création d'un nouvel enregistrement
+            logger.info(f"Création d'une nouvelle facture {sellsy_id}")
+            created_record = self.table.create(airtable_data)
+            record_id = created_record["id"]
+            logger.info(f"Facture {sellsy_id} créée avec succès (record Airtable: {record_id})")
+            return record_id
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de l'insertion/mise à jour de la facture {sellsy_id}: {e}")
+        return None
 
-    def format_supplier_invoice_for_airtable(self, invoice: Dict) -> Optional[Dict]:
-        """
-        Alias pour maintenir la compatibilité avec l'ancien code
-        """
-        return self.format_invoice_for_airtable(invoice)
+def bulk_insert_supplier_invoices(self, invoices: List[Dict], pdf_dir: Optional[str] = None) -> Dict[str, str]:
+    """
+    Insère ou met à jour plusieurs factures fournisseurs en lot
+    
+    Args:
+        invoices: Liste de dictionnaires de factures au format Sellsy (non formaté)
+        pdf_dir: Répertoire contenant les PDF (optionnel)
+        
+    Returns:
+        Dictionnaire associant les ID Sellsy aux ID Airtable
+    """
+    results = {}
+    processed = 0
+    failed = 0
+    
+    if not invoices:
+        logger.warning("Aucune facture à traiter")
+        return results
+    
+    logger.info(f"Traitement en lot de {len(invoices)} factures")
+    
+    for invoice in invoices:
+        try:
+            # Récupérer l'ID de la facture
+            invoice_id = str(invoice.get("id", invoice.get("docid", "")))
+            if not invoice_id:
+                logger.warning("Facture sans ID, ignorée")
+                failed += 1
+                continue
+                
+            # Formatage des données
+            formatted_invoice = self.format_invoice_for_airtable(invoice)
+            if not formatted_invoice:
+                logger.warning(f"Impossible de formater la facture {invoice_id}, ignorée")
+                failed += 1
+                continue
+                
+            # Recherche du PDF si répertoire spécifié
+            pdf_path = None
+            if pdf_dir:
+                # Recherche avec différents formats de nom possibles
+                pdf_patterns = [
+                    f"{invoice_id}.pdf",
+                    f"facture_{invoice_id}.pdf",
+                    f"invoice_{invoice_id}.pdf"
+                ]
+                
+                for pattern in pdf_patterns:
+                    potential_path = os.path.join(pdf_dir, pattern)
+                    if os.path.exists(potential_path):
+                        pdf_path = potential_path
+                        logger.info(f"PDF trouvé pour la facture {invoice_id}: {pdf_path}")
+                        break
+            
+            # Insertion ou mise à jour
+            airtable_id = self.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
+            if airtable_id:
+                results[invoice_id] = airtable_id
+                processed += 1
+                logger.info(f"Facture {invoice_id} traitée avec succès (Airtable ID: {airtable_id})")
+            else:
+                failed += 1
+                logger.warning(f"Échec du traitement de la facture {invoice_id}")
+        
+        except Exception as e:
+            failed += 1
+            logger.error(f"Erreur lors du traitement d'une facture: {e}")
+    
+    logger.info(f"Traitement en lot terminé: {processed} réussi(es), {failed} échec(s)")
+    return results
+
+def delete_supplier_invoice(self, sellsy_id: str) -> bool:
+    """
+    Supprime une facture fournisseur d'Airtable par son ID Sellsy
+    
+    Args:
+        sellsy_id: ID de la facture dans Sellsy
+        
+    Returns:
+        True si supprimé avec succès, False sinon
+    """
+    if not sellsy_id:
+        logger.warning("ID Sellsy vide, impossible de supprimer")
+        return False
+    
+    try:
+        existing_record = self.find_supplier_invoice_by_id(sellsy_id)
+        if not existing_record:
+            logger.warning(f"Facture {sellsy_id} non trouvée, impossible de supprimer")
+            return False
+        
+        record_id = existing_record["id"]
+        self.table.delete(record_id)
+        logger.info(f"Facture {sellsy_id} supprimée avec succès (record Airtable: {record_id})")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression de la facture {sellsy_id}: {e}")
+        return False
+
+def get_all_supplier_invoices(self, max_records: int = 100) -> List[Dict]:
+    """
+    Récupère toutes les factures fournisseurs d'Airtable
+    
+    Args:
+        max_records: Nombre maximum d'enregistrements à récupérer
+        
+    Returns:
+        Liste des factures fournisseurs
+    """
+    try:
+        records = self.table.all(max_records=max_records)
+        logger.info(f"{len(records)} factures fournisseurs récupérées")
+        return records
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des factures fournisseurs: {e}")
+        return []
+
+def search_supplier_invoices(self, search_criteria: Dict) -> List[Dict]:
+    """
+    Recherche des factures fournisseurs selon des critères
+    
+    Args:
+        search_criteria: Dictionnaire des critères de recherche
+        
+    Returns:
+        Liste des factures correspondant aux critères
+    """
+    if not search_criteria:
+        logger.warning("Aucun critère de recherche spécifié")
+        return []
+    
+    formulas = []
+    try:
+        # Construction des formules de recherche
+        for field, value in search_criteria.items():
+            if isinstance(value, str):
+                # Échapper les apostrophes
+                safe_value = value.replace("'", "''")
+                formulas.append(f"{{{field}}}='{safe_value}'")
+            elif isinstance(value, (int, float)):
+                formulas.append(f"{{{field}}}={value}")
+            elif isinstance(value, bool):
+                formulas.append(f"{{{field}}}={str(value).lower()}")
+            elif isinstance(value, dict) and "min" in value and "max" in value:
+                # Recherche par plage
+                formulas.append(f"AND({{{field}}}>={value['min']}, {{{field}}}<={value['max']})")
+            elif isinstance(value, dict) and "contains" in value:
+                # Recherche contenant
+                safe_contains = str(value["contains"]).replace("'", "''")
+                formulas.append(f"FIND('{safe_contains}', {{{field}}})")
+        
+        # Combinaison des formules
+        final_formula = f"AND({','.join(formulas)})" if len(formulas) > 1 else formulas[0]
+        
+        logger.info(f"Recherche avec formule: {final_formula}")
+        records = self.table.all(formula=final_formula)
+        logger.info(f"{len(records)} factures trouvées")
+        return records
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la recherche de factures: {e}")
+        return []
+
+def get_supplier_invoice_stats(self) -> Dict[str, Any]:
+    """
+    Calcule des statistiques sur les factures fournisseurs
+    
+    Returns:
+        Dictionnaire de statistiques
+    """
+    try:
+        records = self.table.all()
+        if not records:
+            logger.warning("Aucune facture trouvée pour calculer les statistiques")
+            return {
+                "total_count": 0,
+                "total_amount_ht": 0,
+                "total_amount_ttc": 0,
+                "status_distribution": {},
+                "supplier_distribution": {}
+            }
+        
+        # Initialisation des compteurs
+        total_ht = 0
+        total_ttc = 0
+        status_count = {}
+        supplier_count = {}
+        
+        # Calcul des statistiques
+        for record in records:
+            fields = record["fields"]
+            
+            # Montants
+            if "Montant_HT" in fields:
+                total_ht += self._safe_float_conversion(fields["Montant_HT"])
+            if "Montant_TTC" in fields:
+                total_ttc += self._safe_float_conversion(fields["Montant_TTC"])
+            
+            # Statuts
+            status = fields.get("Statut", "Non spécifié")
+            status_count[status] = status_count.get(status, 0) + 1
+            
+            # Fournisseurs
+            supplier = fields.get("Fournisseur", "Non spécifié")
+            supplier_count[supplier] = supplier_count.get(supplier, 0) + 1
+        
+        # Construction du résultat
+        result = {
+            "total_count": len(records),
+            "total_amount_ht": round(total_ht, 2),
+            "total_amount_ttc": round(total_ttc, 2),
+            "status_distribution": status_count,
+            "supplier_distribution": supplier_count
+        }
+        
+        logger.info(f"Statistiques calculées: {len(records)} factures, {round(total_ttc, 2)}€ TTC")
+        return result
+    
+    except Exception as e:
+        logger.error(f"Erreur lors du calcul des statistiques: {e}")
+        return {
+            "error": str(e),
+            "total_count": 0
+        }
