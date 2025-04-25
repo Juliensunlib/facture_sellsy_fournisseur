@@ -83,43 +83,45 @@ class SellsySupplierAPI:
             logger.error(f"Exception API POST: {e}")
         return None
 
-    def _make_v1_request(self, method: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
-        """
-        Effectue une requ\u00eate vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
-        """
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+   def _make_v1_request(self, method: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
+    """
+    Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
+    """
+    headers = {
+        "Authorization": f"Bearer {self.access_token}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
 
-        payload = {
-            "request": json.dumps({
-                "method": method,
-                "params": params
-            }),
-            "io_mode": "json"
-        }
+    # Formatage correct du payload avec la clé 'do_in'
+    payload = {
+        "method": method,
+        "io_mode": "json",  # Toujours utiliser json comme io_mode
+        "do_in": json.dumps({
+            "method": method,
+            "params": params
+        })  # Utilisation de 'do_in' comme clé pour la requête
+    }
 
-        logger.info(f"Requ\u00eate API v1 vers {self.api_v1_url} - M\u00e9thode: {method}")
-        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+    logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
+    logger.info(f"Payload: {json.dumps(payload, indent=2)}")
 
-        try:
-            response = requests.post(self.api_v1_url, headers=headers, data=payload)
-            logger.info(f"Code de statut de la r\u00e9ponse: {response.status_code}")
+    try:
+        response = requests.post(self.api_v1_url, headers=headers, data=payload)
+        logger.info(f"Code de statut de la réponse: {response.status_code}")
 
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"R\u00e9ponse r\u00e9ussie: {json.dumps(result, indent=2)[:500]}...")
-                return result
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")
+            return result
 
-            logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
-        except requests.RequestException as e:
-            logger.error(f"Exception API v1: {e}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Erreur de d\u00e9codage JSON: {e}")
-            logger.error(f"Contenu de la r\u00e9ponse: {response.text[:500]}...")
+        logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
+    except requests.RequestException as e:
+        logger.error(f"Exception API v1: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Erreur de décodage JSON: {e}")
+        logger.error(f"Contenu de la réponse: {response.text[:500]}...")
 
-        return None
+    return None
 
     def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
         logger.info("\ud83d\udcc5 Recherche des factures fournisseur via API v1...")
