@@ -98,7 +98,7 @@ class SellsySupplierAPI:
         }
 
         logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
-        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+        logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
 
         try:
             response = requests.post(self.api_v1_url, headers=headers, data=payload)
@@ -106,7 +106,7 @@ class SellsySupplierAPI:
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")
+                logger.debug(f"Réponse réussie: {json.dumps(result, indent=2)[:500]}...")
                 return result
 
             logger.error(f"Erreur API v1 {method}: {response.status_code} - {response.text}")
@@ -118,8 +118,13 @@ class SellsySupplierAPI:
         return None
 
     def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
-        logger.info("📅 Recherche des factures fournisseur via API v1...")
+        """
+        Récupère d'abord les IDs des factures fournisseur puis leurs détails
+        en utilisant Purchase.getOne pour chaque facture
+        """
+        logger.info("📅 Récupération des IDs de factures fournisseur via API v1...")
 
+        # Étape 1: Récupérer les IDs des factures avec Purchase.getList
         params = {
             "pagination": {
                 "nbperpage": min(limit, 100),
@@ -132,47 +137,90 @@ class SellsySupplierAPI:
             "doctype": "invoice"
         }
 
-        invoices = []
+        invoice_ids = []
+        detailed_invoices = []
         total_pages = 1
         current_page = 1
 
-        while current_page <= total_pages and len(invoices) < limit:
+        while current_page <= total_pages and len(invoice_ids) < limit:
             params["pagination"]["pagenum"] = current_page
+            logger.info(f"Récupération de la page {current_page} de la liste des factures")
 
             response = self._make_v1_request("Purchase.getList", params)
 
             if not response or response.get("status") != "success" or "response" not in response:
-                logger.error("Erreur lors de la récupération des factures fournisseur")
+                logger.error("Erreur lors de la récupération des IDs de factures fournisseur")
                 break
 
             data = response["response"]
 
             if current_page == 1 and "infos" in data and "nbpages" in data["infos"]:
                 total_pages = data["infos"]["nbpages"]
+                logger.info(f"Total des pages: {total_pages}")
 
-            if "result" in data:
-                batch = list(data["result"].values()) if isinstance(data["result"], dict) else []
-                invoices.extend(batch)
+            if "result" in data and isinstance(data["result"], dict):
+                # Dans l'API Sellsy, chaque facture est une entrée dans un dictionnaire
+                # avec l'ID comme clé
+                for invoice_id in data["result"].keys():
+                    invoice_ids.append(invoice_id)
+                    logger.info(f"ID de facture trouvé: {invoice_id}")
 
             current_page += 1
 
-            if len(invoices) >= limit:
-                invoices = invoices[:limit]
+            if len(invoice_ids) >= limit:
+                invoice_ids = invoice_ids[:limit]
                 break
 
-        logger.info(f"📋 {len(invoices)} factures fournisseur trouvées")
-        return invoices
+        logger.info(f"📋 {len(invoice_ids)} IDs de factures fournisseur trouvés")
+
+        # Étape 2: Récupérer les détails de chaque facture avec Purchase.getOne
+        logger.info("Récupération des détails des factures via Purchase.getOne")
+        for invoice_id in invoice_ids:
+            logger.info(f"Récupération des détails pour la facture ID: {invoice_id}")
+            details = self.get_supplier_invoice_details(invoice_id)
+            
+            if details and details.get("status") == "success" and "response" in details:
+                invoice_details = details["response"]
+                logger.info(f"Détails récupérés avec succès pour la facture {invoice_id}")
+                
+                # Ajout de l'ID explicite dans les détails si ce n'est pas déjà présent
+                if "id" not in invoice_details:
+                    invoice_details["id"] = invoice_id
+                    
+                detailed_invoices.append(invoice_details)
+            else:
+                logger.error(f"Échec de la récupération des détails pour la facture {invoice_id}")
+
+        logger.info(f"📋 {len(detailed_invoices)} factures fournisseur détaillées récupérées")
+        return detailed_invoices
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"🔍 Détails de la facture fournisseur {invoice_id}")
+        """
+        Récupère les détails d'une facture fournisseur via Purchase.getOne
+        """
+        logger.info(f"🔍 Récupération des détails de la facture fournisseur {invoice_id}")
 
         params = {
-            "id": invoice_id
+            "id": invoice_id,
+            "includeTags": "N"  # Ne pas inclure les smart-tags pour simplifier
         }
 
-        return self._make_v1_request("Purchase.getOne", params)
+        response = self._make_v1_request("Purchase.getOne", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            logger.info(f"Détails récupérés pour la facture {invoice_id}")
+            # Ajouter l'ID explicitement pour assurer la cohérence
+            if "id" not in response["response"]:
+                response["response"]["id"] = invoice_id
+            return response
+        else:
+            logger.error(f"Impossible de récupérer les détails de la facture {invoice_id}")
+            return None
 
     def search_purchase_invoices(self, limit: int = 100) -> List[Dict]:
+        """
+        Méthode pour l'API V2 OCR, conservée pour compatibilité
+        """
         logger.info("📅 Recherche des factures d'achat OCR avec filtre (POST)...")
         offset = 0
         invoices = []
@@ -199,6 +247,9 @@ class SellsySupplierAPI:
         return invoices[:limit]
 
     def get_invoice_details(self, invoice_id: str) -> Optional[Dict]:
+        """
+        Méthode pour l'API V2 OCR, conservée pour compatibilité
+        """
         logger.info(f"🔍 Détails de la facture OCR {invoice_id}")
         return self._make_get(f"/ocr/pur-invoice/{invoice_id}")
 
