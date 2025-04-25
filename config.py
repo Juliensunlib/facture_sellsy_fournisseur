@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 # Charger les variables d'environnement à partir du fichier .env
 load_dotenv()
 
-# Sellsy V2 - OAuth2
+# Sellsy V2 - OAuth2 (utilisé aussi pour l'API V1)
 SELLSY_CLIENT_ID = os.getenv("SELLSY_CLIENT_ID")
 SELLSY_CLIENT_SECRET = os.getenv("SELLSY_CLIENT_SECRET")
 SELLSY_V2_API_URL = os.getenv("SELLSY_V2_API_URL", "https://api.sellsy.com/v2")
