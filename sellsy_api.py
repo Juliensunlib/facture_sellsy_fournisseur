@@ -21,7 +21,7 @@ logger = logging.getLogger("sellsy_supplier_api")
 class SellsySupplierAPI:
     def __init__(self):
         self.api_v2_url = SELLSY_V2_API_URL
-        self.api_v1_url = "https://api.sellsy.com/v1/api.php"  # URL pour l'API v1
+        self.api_v1_url = "https://apifeed.sellsy.com"  # URL pour l'API v1
         self.token_url = "https://login.sellsy.com/oauth2/access-tokens"
         self.access_token = self.get_access_token()
 
