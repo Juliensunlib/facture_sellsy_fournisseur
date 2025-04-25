@@ -21,7 +21,7 @@ security = HTTPBearer(auto_error=False)  # Rendre l'authentification optionnelle
 
 # Initialisation des APIs
 sellsy_api = SellsySupplierAPI()
-airtable_api = AirtableSupplierAPI()
+airtable_api = AirtableAPI()
 
 def verify_signature(signature: str, payload: bytes) -> bool:
     """
@@ -83,7 +83,7 @@ async def validate_webhook(
 @app.post("/webhook/supplier-invoice")
 async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
     """
-    Point de terminaison pour les webhooks de factures fournisseur Sellsy
+    Point de terminaison pour les webhooks de factures fournisseur Sellsy v2
     
     Args:
         payload: Contenu validé de la requête
@@ -95,23 +95,25 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         # Convertir le payload en JSON
         data = json.loads(payload.decode('utf-8'))
         
-        logger.info(f"📩 Webhook reçu pour une facture fournisseur: {data.get('event', 'unknown')}")
+        logger.info(f"📩 Webhook reçu pour une facture fournisseur: {data.get('action', 'unknown')}")
         
-        # Vérifier le type d'événement (adapté pour l'API v1)
-        # Note: Vérifiez la documentation Sellsy v1 pour le format exact des événements
-        event_type = data.get("event", "")
-        if not event_type.startswith("purchaseinvoice"):
-            logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {event_type}")
+        # Vérifier le type d'événement (adapté pour l'API v2)
+        # Note: Dans v2, les événements sont généralement structurés différemment
+        event_type = data.get("action", "")
+        resource_type = data.get("resource", {}).get("type", "")
+        
+        # Vérifier si l'événement concerne une facture fournisseur
+        # Adapter ces conditions selon la documentation Sellsy v2
+        if resource_type != "purchase" or not event_type:
+            logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {resource_type}/{event_type}")
             return {"status": "ignored", "reason": "event not related to supplier invoices"}
         
-        # Extraction de l'ID de facture fournisseur (adapté pour l'API v1)
+        # Extraction de l'ID de facture fournisseur (adapté pour l'API v2)
         invoice_id = None
-        if "data" in data and "id" in data["data"]:
+        if "resource" in data and "id" in data["resource"]:
+            invoice_id = data["resource"]["id"]
+        elif "data" in data and "id" in data["data"]:
             invoice_id = data["data"]["id"]
-        elif "object" in data and "id" in data["object"]:
-            invoice_id = data["object"]["id"]
-        elif "entityid" in data:
-            invoice_id = data["entityid"]
             
         if not invoice_id:
             logger.error("❌ Impossible d'extraire l'ID de facture fournisseur du webhook")
@@ -126,7 +128,7 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         
         while retry_count < max_retries and not invoice_details:
             try:
-                # Utilisation de la méthode v1 pour récupérer les détails
+                # Utilisation de la méthode v2 pour récupérer les détails
                 invoice_details = sellsy_api.get_supplier_invoice_details(invoice_id)
                 if not invoice_details and retry_count < max_retries - 1:
                     retry_count += 1
@@ -143,7 +145,7 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
             return {"status": "error", "reason": "invoice details not found"}
         
         # Formatage des données pour Airtable
-        formatted_invoice = airtable_api.format_supplier_invoice_for_airtable(invoice_details)
+        formatted_invoice = airtable_api.format_invoice_for_airtable(invoice_details)
         
         if not formatted_invoice:
             logger.error(f"❌ Échec du formatage de la facture fournisseur {invoice_id}")
@@ -189,8 +191,7 @@ async def health_check():
     apis_status = {"sellsy": "unknown", "airtable": "unknown"}
     
     try:
-        # Test simple de l'API Sellsy v1
-        # Pour l'API v1, nous devons adapter la vérification de connexion
+        # Test simple de l'API Sellsy v2
         _ = sellsy_api.test_connection()
         apis_status["sellsy"] = "ok"
     except Exception as e:
@@ -199,7 +200,6 @@ async def health_check():
     
     try:
         # Test simple de l'API Airtable
-        # Ne fait rien si la connexion est correcte, lève une exception sinon
         _ = airtable_api.table
         apis_status["airtable"] = "ok"
     except Exception as e:
@@ -221,10 +221,10 @@ async def root():
         Message d'information sur le service
     """
     return {
-        "service": "Sellsy v1 to Airtable Synchronization Webhook",
+        "service": "Sellsy v2 to Airtable Synchronization Webhook",
         "endpoints": [
             "/webhook/supplier-invoice",
             "/health"
         ],
-        "version": "1.0.0"
+        "version": "2.0.0"
     }
