@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import requests
+import base64
 from typing import List, Dict, Optional, Any
 from config import (
     SELLSY_CLIENT_ID,
