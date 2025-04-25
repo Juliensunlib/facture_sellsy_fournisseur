@@ -21,7 +21,7 @@ logger = logging.getLogger("sellsy_supplier_api")
 class SellsySupplierAPI:
     def __init__(self):
         self.api_v2_url = SELLSY_V2_API_URL
-        self.api_v1_url = "https://apifeed.sellsy.com"  # URL pour l'API v1
+        self.api_v1_url = "https://apifeed.sellsy.com"
         self.token_url = "https://login.sellsy.com/oauth2/access-tokens"
         self.access_token = self.get_access_token()
 
@@ -31,7 +31,7 @@ class SellsySupplierAPI:
         os.makedirs(PDF_STORAGE_DIR, exist_ok=True)
 
     def get_access_token(self) -> Optional[str]:
-        logger.info("\ud83d\udd10 Récupération du token OAuth2 Sellsy")
+        logger.info("🔐 Récupération du token OAuth2 Sellsy")
         try:
             auth_string = f"{SELLSY_CLIENT_ID}:{SELLSY_CLIENT_SECRET}"
             auth_bytes = auth_string.encode('ascii')
@@ -47,8 +47,7 @@ class SellsySupplierAPI:
             response = requests.post(self.token_url, headers=headers, data=data)
 
             if response.status_code == 200:
-                token_data = response.json()
-                return token_data.get("access_token")
+                return response.json().get("access_token")
             else:
                 logger.error(f"Erreur OAuth2 : {response.status_code} {response.text}")
         except requests.RequestException as e:
@@ -84,22 +83,18 @@ class SellsySupplierAPI:
         return None
 
     def _make_v1_request(self, method: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
-        """
-        Effectue une requête vers l'API v1 de Sellsy en utilisant l'authentification OAuth2.
-        """
         headers = {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/x-www-form-urlencoded"
         }
 
-        # Formatage correct du payload avec la clé 'do_in'
         payload = {
             "method": method,
-            "io_mode": "json",  # Toujours utiliser json comme io_mode
+            "io_mode": "json",
             "do_in": json.dumps({
                 "method": method,
                 "params": params
-            })  # Utilisation de 'do_in' comme clé pour la requête
+            })
         }
 
         logger.info(f"Requête API v1 vers {self.api_v1_url} - Méthode: {method}")
@@ -120,11 +115,10 @@ class SellsySupplierAPI:
         except json.JSONDecodeError as e:
             logger.error(f"Erreur de décodage JSON: {e}")
             logger.error(f"Contenu de la réponse: {response.text[:500]}...")
-
         return None
 
     def get_supplier_invoices(self, limit: int = 100) -> List[Dict]:
-        logger.info("\ud83d\udcc5 Recherche des factures fournisseur via API v1...")
+        logger.info("📅 Recherche des factures fournisseur via API v1...")
 
         params = {
             "pagination": {
@@ -135,7 +129,7 @@ class SellsySupplierAPI:
                 "direction": "DESC",
                 "field": "doc_date"
             },
-            "doctype": "invoice"  # Ajout du type de document "invoice"
+            "doctype": "invoice"
         }
 
         invoices = []
@@ -166,11 +160,11 @@ class SellsySupplierAPI:
                 invoices = invoices[:limit]
                 break
 
-        logger.info(f"\ud83d\udccb {len(invoices)} factures fournisseur trouvées")
+        logger.info(f"📋 {len(invoices)} factures fournisseur trouvées")
         return invoices
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"\ud83d\udd0d Détails de la facture fournisseur {invoice_id}")
+        logger.info(f"🔍 Détails de la facture fournisseur {invoice_id}")
 
         params = {
             "id": invoice_id
@@ -179,7 +173,7 @@ class SellsySupplierAPI:
         return self._make_v1_request("Purchase.getOne", params)
 
     def search_purchase_invoices(self, limit: int = 100) -> List[Dict]:
-        logger.info("\ud83d\udcc5 Recherche des factures d'achat OCR avec filtre (POST)...")
+        logger.info("📅 Recherche des factures d'achat OCR avec filtre (POST)...")
         offset = 0
         invoices = []
 
@@ -205,11 +199,11 @@ class SellsySupplierAPI:
         return invoices[:limit]
 
     def get_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"\ud83d\udd0d Détails de la facture OCR {invoice_id}")
+        logger.info(f"🔍 Détails de la facture OCR {invoice_id}")
         return self._make_get(f"/ocr/pur-invoice/{invoice_id}")
 
     def download_invoice_pdf(self, pdf_url: str, invoice_id: str) -> Optional[str]:
-        logger.info(f"\u2b07\ufe0f Téléchargement du PDF pour la facture {invoice_id}")
+        logger.info(f"⬇️ Téléchargement du PDF pour la facture {invoice_id}")
         try:
             headers = {
                 "Authorization": f"Bearer {self.access_token}"
@@ -219,7 +213,7 @@ class SellsySupplierAPI:
                 file_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
                 with open(file_path, "wb") as f:
                     f.write(response.content)
-                logger.info(f"\ud83d\udcc4 PDF enregistré: {file_path}")
+                logger.info(f"📄 PDF enregistré: {file_path}")
                 return file_path
             else:
                 logger.error(f"Erreur téléchargement PDF: {response.status_code}")
@@ -228,7 +222,7 @@ class SellsySupplierAPI:
         return None
 
     def get_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
-        logger.info(f"\ud83d\udcc4 Récupération du PDF pour la facture fournisseur {invoice_id}")
+        logger.info(f"📄 Récupération du PDF pour la facture fournisseur {invoice_id}")
 
         params = {
             "docid": invoice_id,
