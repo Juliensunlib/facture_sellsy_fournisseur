@@ -303,46 +303,33 @@ class AirtableAPI:
         status = ""
         status_field_used = None
         
-        if format_v1:
-            # Format V1
-            status_fields = ["step_hex", "doc_status", "status"]
+        # Priorité au champ "step" de Sellsy
+        if "step" in invoice and invoice["step"]:
+            status = str(invoice["step"])
+            status_field_used = "step"
+            logger.info(f"Statut trouvé via step: {status}")
         else:
-            # Format OCR/V2
-            status_fields = ["status", "doc_status", "state", "documentStatus"]
-        
-        for field in status_fields:
-            if field in invoice and invoice[field]:
-                status = str(invoice[field])
-                status_field_used = field
-                logger.info(f"Statut trouvé via {field}: {status}")
-                break
-        
-        # Mapper les codes statut vers des libellés explicites
-        status_mapping = {
-            "paid": "Payée",
-            "unpaid": "Non payée",
-            "draft": "Brouillon",
-            "created": "Créée",
-            "validated": "Validée",
-            "canceled": "Annulée",
-            "pending": "En attente",
-            "accepted": "Acceptée",
-            "sent": "Envoyée",
-            "partpaid": "Partiellement payée",
-            "cancelled": "Annulée",
-            "ok": "Validée"  # Ajout pour gérer le cas dans les logs
-        }
-        
-        # Appliquer le mapping si disponible
-        original_status = status
-        status = status_mapping.get(status.lower(), status)
+            # Fallback sur les autres champs si "step" n'existe pas
+            if format_v1:
+                # Format V1
+                status_fields = ["step_hex", "doc_status", "status"]
+            else:
+                # Format OCR/V2
+                status_fields = ["status", "doc_status", "state", "documentStatus"]
+            
+            for field in status_fields:
+                if field in invoice and invoice[field]:
+                    status = str(invoice[field])
+                    status_field_used = field
+                    logger.info(f"Statut trouvé via {field}: {status}")
+                    break
         
         # Si statut toujours vide, définir un statut par défaut
         if not status:
             status = "Non spécifié"
             logger.warning(f"Statut non trouvé, utilisation par défaut: {status}")
         else:
-            logger.info(f"Statut final: {status} (origine: {original_status} via {status_field_used})")
+            logger.info(f"Statut final: {status} (origine: {status} via {status_field_used})")
         
         # --- Récupération du lien PDF ---
         pdf_url = ""
