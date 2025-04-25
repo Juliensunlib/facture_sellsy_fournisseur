@@ -37,13 +37,9 @@ class AirtableAPI:
             Dictionnaire formaté pour Airtable ou None en cas d'erreur
         """
         # Log pour debug
-        logger.info(f"Traitement facture: {invoice.get('id', invoice.get('docid', 'ID inconnu'))}")
-        try:
-            # Afficher les clés principales pour debug
-            logger.debug(f"Structure complète reçue: {json.dumps(invoice, indent=2)}")
-        except:
-            logger.debug("Impossible de sérialiser la structure complète en JSON")
-            
+        invoice_id = invoice.get('id', invoice.get('docid', 'ID inconnu'))
+        logger.info(f"Traitement facture: {invoice_id}")
+        
         # Vérifications de sécurité
         if not invoice:
             logger.warning("Données de facture invalides ou vides")
@@ -55,12 +51,7 @@ class AirtableAPI:
         format_v1 = "docid" in invoice or "ident" in invoice
         
         # --- Récupération de l'ID de facture ---
-        invoice_id = None
-        if format_v1:
-            invoice_id = str(invoice.get("id", ""))
-        else:
-            invoice_id = str(invoice.get("id", ""))
-            
+        invoice_id = str(invoice.get("id", ""))
         logger.info(f"ID Facture: {invoice_id} (format détecté: {'V1' if format_v1 else 'OCR/V2'})")
         
         # --- Récupération des informations fournisseur ---
@@ -69,7 +60,11 @@ class AirtableAPI:
         
         if format_v1:
             # Format V1
-            if "thirdname" in invoice:
+            if "thirdName" in invoice:
+                supplier_name = invoice.get("thirdName", "")
+                supplier_id = str(invoice.get("thirdid", ""))
+                logger.info(f"Fournisseur trouvé via thirdName: {supplier_name} (ID: {supplier_id})")
+            elif "thirdname" in invoice:
                 supplier_name = invoice.get("thirdname", "")
                 supplier_id = str(invoice.get("thirdid", ""))
                 logger.info(f"Fournisseur trouvé via thirdname: {supplier_name} (ID: {supplier_id})")
@@ -122,36 +117,19 @@ class AirtableAPI:
         if created_date:
             original_date = created_date
             # Conversion en format standard YYYY-MM-DD
-            if isinstance(created_date, str):
-                # Si format ISO avec T
-                if "T" in created_date:
-                    created_date = created_date.split("T")[0]
-                # Format timestamp avec /
-                elif "/" in created_date:
-                    parts = created_date.split("/")
-                    if len(parts) == 3:
-                        # Format français JJ/MM/AAAA
-                        if len(parts[2]) == 4:  # année en 4 chiffres
-                            created_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
-                        # Format MM/JJ/AAAA
-                        else:
-                            created_date = f"{parts[2]}-{parts[0]}-{parts[1]}"
-                
-                # Vérifier et nettoyer le format de date
-                if not re.match(r'^\d{4}-\d{2}-\d{2}$', created_date):
-                    try:
-                        # Tentative de conversion
-                        date_obj = datetime.datetime.strptime(created_date, "%Y-%m-%d")
-                        created_date = date_obj.strftime("%Y-%m-%d")
-                    except ValueError:
-                        # En cas d'échec, utiliser la date actuelle
-                        logger.warning(f"Format de date invalide '{created_date}', utilisation de la date actuelle")
-                        created_date = datetime.datetime.now().strftime("%Y-%m-%d")
-            logger.info(f"Date formatée: {created_date} (origine: {original_date} via {date_field_used})")
+            formatted_date = self._format_date(created_date)
+            
+            if formatted_date:
+                created_date = formatted_date
+                logger.info(f"Date formatée: {created_date} (origine: {original_date} via {date_field_used})")
+            else:
+                # Date par défaut en cas d'échec de formatage
+                created_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                logger.warning(f"Format de date invalide '{original_date}', utilisation de la date actuelle: {created_date}")
         else:
             # Date par défaut
             created_date = datetime.datetime.now().strftime("%Y-%m-%d")
-            logger.warning(f"Date non trouvée pour la facture {invoice_id}, utilisation de la date actuelle")
+            logger.warning(f"Date non trouvée pour la facture {invoice_id}, utilisation de la date actuelle: {created_date}")
         
         # --- Récupération du numéro de facture ---
         reference = ""
@@ -188,12 +166,20 @@ class AirtableAPI:
         
         if format_v1:
             # Format V1
-            if "totalHT" in invoice:
+            if "totalAmountTaxesFree" in invoice:
+                montant_ht = self._safe_float_conversion(invoice["totalAmountTaxesFree"])
+                ht_source = "totalAmountTaxesFree"
+                logger.info(f"Montant HT trouvé via totalAmountTaxesFree: {montant_ht}")
+            elif "totalHT" in invoice:
                 montant_ht = self._safe_float_conversion(invoice["totalHT"])
                 ht_source = "totalHT"
                 logger.info(f"Montant HT trouvé via totalHT: {montant_ht}")
                 
-            if "totalTTC" in invoice:
+            if "totalAmount" in invoice:
+                montant_ttc = self._safe_float_conversion(invoice["totalAmount"])
+                ttc_source = "totalAmount"
+                logger.info(f"Montant TTC trouvé via totalAmount: {montant_ttc}")
+            elif "totalTTC" in invoice:
                 montant_ttc = self._safe_float_conversion(invoice["totalTTC"])
                 ttc_source = "totalTTC"
                 logger.info(f"Montant TTC trouvé via totalTTC: {montant_ttc}")
@@ -212,7 +198,6 @@ class AirtableAPI:
             # Format OCR/V2: Méthode 1 - Extraction structurée des montants depuis "amounts"
             if "amounts" in invoice and isinstance(invoice["amounts"], dict):
                 amounts = invoice["amounts"]
-                logger.info(f"Structure amounts trouvée: {json.dumps(amounts, indent=2)}")
                 
                 # Montant HT
                 ht_keys = ["totalAmountWithoutVat", "total_excluding_tax", "baseHT", "totalHT", "preTax"]
@@ -258,8 +243,6 @@ class AirtableAPI:
             ht_total = 0.0
             for i, row in enumerate(invoice["rows"]):
                 if isinstance(row, dict):
-                    logger.info(f"Ligne {i+1}: {json.dumps(row, indent=2)}")
-                    
                     row_amount = 0.0
                     # Structure 1: montant unitaire * quantité
                     if "unit_amount" in row and "qty" in row:
@@ -343,13 +326,11 @@ class AirtableAPI:
             "validated": "Validée",
             "canceled": "Annulée",
             "pending": "En attente",
-            # Codes spécifiques V1
-            "created": "Créée",
             "accepted": "Acceptée",
             "sent": "Envoyée",
             "partpaid": "Partiellement payée",
-            "paid": "Payée",
-            "cancelled": "Annulée"
+            "cancelled": "Annulée",
+            "ok": "Validée"  # Ajout pour gérer le cas dans les logs
         }
         
         # Appliquer le mapping si disponible
@@ -378,11 +359,7 @@ class AirtableAPI:
         # Construction de l'URL web Sellsy avec l'ID
         web_url = ""
         if invoice_id:
-            # Format différent selon API V1 ou V2
-            if format_v1:
-                web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
-            else:
-                web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
+            web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
             logger.info(f"URL Sellsy construite: {web_url}")
         
         # Construction du résultat final
@@ -406,6 +383,52 @@ class AirtableAPI:
         logger.info(f"Facture {invoice_id} formatée avec succès")
         logger.info(f"Résultat formaté: {json.dumps(result, indent=2)}")
         return result
+
+    def _format_date(self, date_str: str) -> Optional[str]:
+        """
+        Formate une chaîne de date en format YYYY-MM-DD
+        
+        Args:
+            date_str: La chaîne de date à formater
+            
+        Returns:
+            Chaîne au format YYYY-MM-DD ou None en cas d'échec
+        """
+        if not date_str:
+            return None
+            
+        # Si déjà au bon format
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+            return date_str
+            
+        # Liste des formats à essayer
+        date_formats = [
+            "%Y-%m-%d",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%d/%m/%Y",
+            "%d/%m/%Y %H:%M:%S",
+            "%m/%d/%Y",
+            "%m/%d/%Y %H:%M:%S",
+            "%d-%m-%Y",
+            "%d-%m-%Y %H:%M:%S",
+            "%m-%d-%Y",
+            "%m-%d-%Y %H:%M:%S"
+        ]
+        
+        # Tentative de conversion avec chaque format
+        for fmt in date_formats:
+            try:
+                date_obj = datetime.datetime.strptime(date_str, fmt)
+                return date_obj.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+                
+        # Si on arrive ici, aucun format n'a fonctionné
+        return None
 
     def _safe_float_conversion(self, value: Any) -> float:
         """Conversion sécurisée en float avec gestion d'erreurs"""
