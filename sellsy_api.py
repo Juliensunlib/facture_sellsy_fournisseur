@@ -28,22 +28,35 @@ class SellsySupplierAPI:
         os.makedirs(PDF_STORAGE_DIR, exist_ok=True)
 
     def get_access_token(self) -> Optional[str]:
-        logger.info("🔐 Récupération du token OAuth2 Sellsy")
-        try:
-            response = requests.post(self.token_url, data={
-                "grant_type": "client_credentials",
-                "client_id": SELLSY_CLIENT_ID,
-                "client_secret": SELLSY_CLIENT_SECRET
-            })
+    logger.info("🔐 Récupération du token OAuth2 Sellsy")
+    try:
+        # Modification de l'URL
+        self.token_url = "https://login.sellsy.com/oauth2/access-tokens"
+        
+        # Authentification avec Basic Auth
+        auth_string = f"{SELLSY_CLIENT_ID}:{SELLSY_CLIENT_SECRET}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        
+        headers = {
+            "Authorization": f"Basic {auth_b64}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }
+        
+        # Format des données simplifié
+        data = "grant_type=client_credentials"
+        
+        response = requests.post(self.token_url, headers=headers, data=data)
 
-            if response.status_code == 200:
-                token_data = response.json()
-                return token_data.get("access_token")
-            else:
-                logger.error(f"Erreur OAuth2 : {response.status_code} {response.text}")
-        except requests.RequestException as e:
-            logger.error(f"Erreur de requête OAuth2 : {e}")
-        return None
+        if response.status_code == 200:
+            token_data = response.json()
+            return token_data.get("access_token")
+        else:
+            logger.error(f"Erreur OAuth2 : {response.status_code} {response.text}")
+    except requests.RequestException as e:
+        logger.error(f"Erreur de requête OAuth2 : {e}")
+    return None
 
     def _make_get(self, endpoint: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
         headers = {
