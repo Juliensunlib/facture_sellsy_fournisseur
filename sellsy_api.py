@@ -31,7 +31,7 @@ class SellsySupplierAPI:
         os.makedirs(PDF_STORAGE_DIR, exist_ok=True)
 
     def get_access_token(self) -> Optional[str]:
-        logger.info("\ud83d\udd10 R\u00e9cup\u00e9ration du token OAuth2 Sellsy")
+        logger.info("\ud83d\udd10 Récupération du token OAuth2 Sellsy")
         try:
             auth_string = f"{SELLSY_CLIENT_ID}:{SELLSY_CLIENT_SECRET}"
             auth_bytes = auth_string.encode('ascii')
@@ -52,7 +52,7 @@ class SellsySupplierAPI:
             else:
                 logger.error(f"Erreur OAuth2 : {response.status_code} {response.text}")
         except requests.RequestException as e:
-            logger.error(f"Erreur de requ\u00eate OAuth2 : {e}")
+            logger.error(f"Erreur de requête OAuth2 : {e}")
         return None
 
     def _make_get(self, endpoint: str, params: Dict = {}) -> Optional[Dict[str, Any]]:
@@ -134,7 +134,8 @@ class SellsySupplierAPI:
             "order": {
                 "direction": "DESC",
                 "field": "doc_date"
-            }
+            },
+            "doctype": "invoice"  # Ajout du type de document "invoice"
         }
 
         invoices = []
@@ -147,7 +148,7 @@ class SellsySupplierAPI:
             response = self._make_v1_request("Purchase.getList", params)
 
             if not response or response.get("status") != "success" or "response" not in response:
-                logger.error("Erreur lors de la r\u00e9cup\u00e9ration des factures fournisseur")
+                logger.error("Erreur lors de la récupération des factures fournisseur")
                 break
 
             data = response["response"]
@@ -165,11 +166,11 @@ class SellsySupplierAPI:
                 invoices = invoices[:limit]
                 break
 
-        logger.info(f"\ud83d\udccb {len(invoices)} factures fournisseur trouv\u00e9es")
+        logger.info(f"\ud83d\udccb {len(invoices)} factures fournisseur trouvées")
         return invoices
 
     def get_supplier_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"\ud83d\udd0d D\u00e9tails de la facture fournisseur {invoice_id}")
+        logger.info(f"\ud83d\udd0d Détails de la facture fournisseur {invoice_id}")
 
         params = {
             "id": invoice_id
@@ -204,11 +205,11 @@ class SellsySupplierAPI:
         return invoices[:limit]
 
     def get_invoice_details(self, invoice_id: str) -> Optional[Dict]:
-        logger.info(f"\ud83d\udd0d D\u00e9tails de la facture OCR {invoice_id}")
+        logger.info(f"\ud83d\udd0d Détails de la facture OCR {invoice_id}")
         return self._make_get(f"/ocr/pur-invoice/{invoice_id}")
 
     def download_invoice_pdf(self, pdf_url: str, invoice_id: str) -> Optional[str]:
-        logger.info(f"\u2b07\ufe0f T\u00e9l\u00e9chargement du PDF pour la facture {invoice_id}")
+        logger.info(f"\u2b07\ufe0f Téléchargement du PDF pour la facture {invoice_id}")
         try:
             headers = {
                 "Authorization": f"Bearer {self.access_token}"
@@ -218,16 +219,16 @@ class SellsySupplierAPI:
                 file_path = os.path.join(PDF_STORAGE_DIR, f"invoice_{invoice_id}.pdf")
                 with open(file_path, "wb") as f:
                     f.write(response.content)
-                logger.info(f"\ud83d\udcc4 PDF enregistr\u00e9: {file_path}")
+                logger.info(f"\ud83d\udcc4 PDF enregistré: {file_path}")
                 return file_path
             else:
-                logger.error(f"Erreur t\u00e9l\u00e9chargement PDF: {response.status_code}")
+                logger.error(f"Erreur téléchargement PDF: {response.status_code}")
         except requests.RequestException as e:
-            logger.error(f"Erreur lors du t\u00e9l\u00e9chargement du PDF: {e}")
+            logger.error(f"Erreur lors du téléchargement du PDF: {e}")
         return None
 
     def get_supplier_invoice_pdf(self, invoice_id: str) -> Optional[str]:
-        logger.info(f"\ud83d\udcc4 R\u00e9cup\u00e9ration du PDF pour la facture fournisseur {invoice_id}")
+        logger.info(f"\ud83d\udcc4 Récupération du PDF pour la facture fournisseur {invoice_id}")
 
         params = {
             "docid": invoice_id,
