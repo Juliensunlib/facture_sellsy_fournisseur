@@ -21,6 +21,28 @@ class AirtableAPI:
         try:
             self.table = Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SUPPLIER_TABLE_NAME)
             logger.info(f"Connexion établie à la table Airtable: {AIRTABLE_SUPPLIER_TABLE_NAME}")
+            
+            # Dictionnaire de traduction des statuts (étapes) de l'anglais vers le français
+            self.status_translations = {
+                "draft": "Brouillon",
+                "sent": "Envoyé",
+                "accepted": "Accepté",
+                "refused": "Refusé",
+                "expired": "Expiré",
+                "pending": "En attente",
+                "completed": "Terminé",
+                "canceled": "Annulé",
+                "paid": "Payé",
+                "partially_paid": "Partiellement payé",
+                "validated": "Validé",
+                "in_progress": "En cours",
+                "processing": "En traitement",
+                "delivered": "Livré",
+                "archived": "Archivé",
+                "new": "Nouveau",
+                "received": "Reçu",
+                "ordered": "Commandé"
+            }
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation de la connexion Airtable: {e}")
             raise
@@ -308,6 +330,12 @@ class AirtableAPI:
             status = str(invoice["step"])
             status_field_used = "step"
             logger.info(f"Statut trouvé via step: {status}")
+            
+            # Traduction du statut en français si disponible
+            if status.lower() in self.status_translations:
+                original_status = status
+                status = self.status_translations[status.lower()]
+                logger.info(f"Statut traduit: '{original_status}' -> '{status}'")
         else:
             # Fallback sur les autres champs si "step" n'existe pas
             if format_v1:
@@ -322,6 +350,13 @@ class AirtableAPI:
                     status = str(invoice[field])
                     status_field_used = field
                     logger.info(f"Statut trouvé via {field}: {status}")
+                    
+                    # Vérifier si le statut doit être traduit
+                    if status.lower() in self.status_translations:
+                        original_status = status
+                        status = self.status_translations[status.lower()]
+                        logger.info(f"Statut traduit: '{original_status}' -> '{status}'")
+                    
                     break
         
         # Si statut toujours vide, définir un statut par défaut
@@ -329,7 +364,7 @@ class AirtableAPI:
             status = "Non spécifié"
             logger.warning(f"Statut non trouvé, utilisation par défaut: {status}")
         else:
-            logger.info(f"Statut final: {status} (origine: {status} via {status_field_used})")
+            logger.info(f"Statut final: {status} (origine: {status_field_used})")
         
         # --- Récupération du lien PDF ---
         pdf_url = ""
