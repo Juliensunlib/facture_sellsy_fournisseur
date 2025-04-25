@@ -32,10 +32,10 @@ def verify_signature(signature: str, payload: bytes) -> bool:
         payload: Contenu brut de la requête
         
     Returns:
-        True si la signature est valide ou si WEBHOOK_SECRET n'est pas défini
+        True si la signature est valide, False sinon
     """
     if not WEBHOOK_SECRET:
-        logger.warning("⚠️ WEBHOOK_SECRET non défini, vérification désactivée")
+        logger.warning("⚠️ WEBHOOK_SECRET non défini, vérification désactivée mais non recommandée en production")
         return True
         
     try:
@@ -154,7 +154,8 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         # Téléchargement du PDF avec gestion des erreurs
         pdf_path = None
         try:
-            pdf_path = sellsy_api.download_supplier_invoice_pdf(invoice_id)
+            # Correction du nom de méthode pour correspondre à celle définie dans sellsy_api.py
+            pdf_path = sellsy_api.get_supplier_invoice_pdf(invoice_id)
             if pdf_path:
                 logger.info(f"✅ PDF téléchargé: {pdf_path}")
         except Exception as e:
@@ -191,9 +192,13 @@ async def health_check():
     apis_status = {"sellsy": "unknown", "airtable": "unknown"}
     
     try:
-        # Test simple de l'API Sellsy v2
-        _ = sellsy_api.test_connection()
-        apis_status["sellsy"] = "ok"
+        # Test simple de l'API Sellsy v2 - Vérifier si le token est valide
+        if sellsy_api.access_token:
+            # Faire une requête simple pour vérifier la connexion
+            test_result = sellsy_api._make_get("/myself")
+            apis_status["sellsy"] = "ok" if test_result else "error"
+        else:
+            apis_status["sellsy"] = "error"
     except Exception as e:
         logger.warning(f"Problème avec l'API Sellsy: {e}")
         apis_status["sellsy"] = "error"
