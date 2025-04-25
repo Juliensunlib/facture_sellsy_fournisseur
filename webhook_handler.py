@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
 import time
 from sellsy_api import SellsySupplierAPI
-from airtable_api import AirtableSupplierAPI
+from airtable_api import AirtableAPI
 from config import WEBHOOK_SECRET
 import hmac
 import hashlib
