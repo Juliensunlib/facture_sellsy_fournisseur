@@ -4,6 +4,7 @@ import logging
 import requests
 import base64
 import json
+import datetime
 from typing import List, Dict, Optional, Any
 from config import (
     SELLSY_CLIENT_ID,
@@ -343,3 +344,32 @@ class SellsySupplierAPI:
 
         logger.error(f"Impossible d'obtenir l'URL du PDF pour la facture {invoice_id}")
         return None
+        
+    def get_custom_field(self, field_id: str) -> Optional[Dict]:
+        """
+        Récupère les détails d'un champ personnalisé via CustomFields.getOne
+        
+        Args:
+            field_id: ID du champ personnalisé à récupérer
+            
+        Returns:
+            Dictionnaire contenant les détails du champ personnalisé ou None en cas d'erreur
+        """
+        if not field_id:
+            logger.error("ID de champ personnalisé vide, impossible de récupérer les détails")
+            return None
+            
+        logger.info(f"🔍 Récupération des détails du champ personnalisé {field_id}")
+
+        params = {
+            "id": field_id
+        }
+
+        response = self._make_v1_request("CustomFields.getOne", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            logger.info(f"Détails récupérés pour le champ personnalisé {field_id}")
+            return response
+        else:
+            logger.error(f"Impossible de récupérer les détails du champ personnalisé {field_id}")
+            return None
