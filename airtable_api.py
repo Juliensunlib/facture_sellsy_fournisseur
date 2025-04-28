@@ -388,6 +388,62 @@ class AirtableAPI:
             web_url = f"https://go.sellsy.com/purchase/{invoice_id}"
             logger.info(f"URL Sellsy construite: {web_url}")
         
+        # --- NOUVEAU: Récupération des champs personnalisés ---
+        numero_de_facture_custom = ""
+        client_abonne_id = ""
+        client_abonne_name = ""
+        
+        # Extraction des champs personnalisés
+        if "customfields" in invoice and isinstance(invoice["customfields"], dict):
+            logger.info("Traitement des champs personnalisés")
+            
+            # Parcourir les champs personnalisés
+            for custom_field_id, custom_field_data in invoice["customfields"].items():
+                # Recherche du champ "numero-de-facture"
+                if isinstance(custom_field_data, dict):
+                    if custom_field_data.get("code") == "numero-de-facture" and "value" in custom_field_data:
+                        numero_de_facture_custom = str(custom_field_data["value"])
+                        logger.info(f"Champ personnalisé 'numero-de-facture' trouvé: {numero_de_facture_custom}")
+                    
+                    # Recherche du champ "client-abonne"
+                    elif custom_field_data.get("code") == "client-abonne" and "value" in custom_field_data:
+                        # La valeur peut être une chaîne ou un dictionnaire selon le format
+                        if isinstance(custom_field_data["value"], dict):
+                            client_abonne_id = str(custom_field_data["value"].get("id", ""))
+                            client_abonne_name = custom_field_data["value"].get("name", "")
+                        elif isinstance(custom_field_data["value"], str) and custom_field_data["value"].isdigit():
+                            client_abonne_id = custom_field_data["value"]
+                        logger.info(f"Champ personnalisé 'client-abonne' trouvé: ID={client_abonne_id}, Nom={client_abonne_name}")
+        
+        # Format alternatif pour les champs personnalisés (format OCR/V2)
+        if not numero_de_facture_custom or not client_abonne_id:
+            if "custom_fields" in invoice and isinstance(invoice["custom_fields"], list):
+                for custom_field in invoice["custom_fields"]:
+                    if isinstance(custom_field, dict):
+                        # Recherche du champ "numero-de-facture"
+                        if custom_field.get("code") == "numero-de-facture" and "value" in custom_field:
+                            numero_de_facture_custom = str(custom_field["value"])
+                            logger.info(f"Champ personnalisé 'numero-de-facture' trouvé (format alternatif): {numero_de_facture_custom}")
+                        
+                        # Recherche du champ "client-abonne"
+                        elif custom_field.get("code") == "client-abonne" and "value" in custom_field:
+                            if isinstance(custom_field["value"], dict):
+                                client_abonne_id = str(custom_field["value"].get("id", ""))
+                                client_abonne_name = custom_field["value"].get("name", "")
+                            elif isinstance(custom_field["value"], str) and custom_field["value"].isdigit():
+                                client_abonne_id = custom_field["value"]
+                            logger.info(f"Champ personnalisé 'client-abonne' trouvé (format alternatif): ID={client_abonne_id}, Nom={client_abonne_name}")
+
+        # Essayer de trouver le client abonné dans d'autres structures pour le format V1
+        if not client_abonne_id and format_v1:
+            if "related" in invoice and isinstance(invoice["related"], dict):
+                for rel_type, rel_data in invoice["related"].items():
+                    if rel_type.lower() in ["client", "customer", "consumer"] and isinstance(rel_data, dict):
+                        client_abonne_id = str(rel_data.get("id", ""))
+                        client_abonne_name = rel_data.get("name", rel_data.get("displayName", ""))
+                        logger.info(f"Client abonné trouvé via related.{rel_type}: ID={client_abonne_id}, Nom={client_abonne_name}")
+                        break
+        
         # Construction du résultat final
         result = {
             "ID_Facture_Fournisseur": invoice_id,
@@ -405,6 +461,21 @@ class AirtableAPI:
         if pdf_url:
             result["PDF_URL"] = pdf_url
             logger.info(f"PDF_URL ajouté: {pdf_url} (source: {pdf_url_field})")
+        
+        # Ajouter le numéro de facture personnalisé s'il est disponible
+        if numero_de_facture_custom:
+            result["Numéro_Facture_Personnalisé"] = numero_de_facture_custom
+            logger.info(f"Numéro de facture personnalisé ajouté: {numero_de_facture_custom}")
+        
+        # Ajouter l'ID du client abonné s'il est disponible
+        if client_abonne_id:
+            result["ID_Client_Abonne"] = client_abonne_id
+            logger.info(f"ID client abonné ajouté: {client_abonne_id}")
+            
+            # Ajouter le nom du client abonné s'il est disponible
+            if client_abonne_name:
+                result["Nom_Client_Abonne"] = client_abonne_name
+                logger.info(f"Nom client abonné ajouté: {client_abonne_name}")
         
         logger.info(f"Facture {invoice_id} formatée avec succès")
         logger.info(f"Résultat formaté: {json.dumps(result, indent=2)}")
@@ -564,7 +635,7 @@ class AirtableAPI:
             # Préparation des données
             airtable_data = invoice_data.copy()
             
-            # Traitement du PDF si disponible
+            # Traitement du PDF via chemin local si disponible
             if pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                 logger.info(f"Ajout du PDF pour la facture {sellsy_id}: {pdf_path}")
 
@@ -578,6 +649,16 @@ class AirtableAPI:
                     ]
                 else:
                     logger.warning(f"Impossible d'encoder le PDF pour la facture {sellsy_id}")
+            
+            # Téléchargement et intégration du PDF depuis l'URL si disponible
+            elif "PDF_URL" in airtable_data and airtable_data["PDF_URL"]:
+                pdf_url = airtable_data["PDF_URL"]
+                logger.info(f"URL du PDF disponible pour la facture {sellsy_id}: {pdf_url}")
+                
+                # Si nous avons seulement l'URL du PDF, la conserver pour affichage
+                # Airtable utilisera cette URL pour afficher un lien vers le PDF
+                airtable_data["Lien_PDF"] = pdf_url
+                logger.info(f"Lien PDF ajouté pour la facture {sellsy_id}")
 
             # Recherche d'un enregistrement existant
             existing_record = self.find_supplier_invoice_by_id(sellsy_id)
@@ -603,3 +684,101 @@ class AirtableAPI:
         Alias pour maintenir la compatibilité avec l'ancien code
         """
         return self.format_invoice_for_airtable(invoice)
+    
+    def download_pdf_from_url(self, url: str, output_path: str) -> bool:
+        """
+        Télécharge un PDF depuis une URL
+        
+        Args:
+            url: URL du PDF à télécharger
+            output_path: Chemin où sauvegarder le PDF
+            
+        Returns:
+            True si le téléchargement a réussi, False sinon
+        """
+        try:
+            import requests
+            
+            # Vérification de l'URL
+            if not url or not url.startswith(('http://', 'https://')):
+                logger.warning(f"URL invalide pour le téléchargement du PDF: {url}")
+                return False
+            
+            # Création du répertoire parent si besoin
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Téléchargement avec timeout
+            logger.info(f"Téléchargement du PDF depuis {url}")
+            response = requests.get(url, timeout=30, stream=True)
+            
+            # Vérification de la réponse HTTP
+            if response.status_code != 200:
+                logger.warning(f"Échec du téléchargement du PDF: statut HTTP {response.status_code}")
+                return False
+            
+            # Vérification du type de contenu
+            content_type = response.headers.get('Content-Type', '')
+            if 'application/pdf' not in content_type and not url.lower().endswith('.pdf'):
+                logger.warning(f"Le contenu téléchargé n'est pas un PDF: {content_type}")
+                # On continue quand même, car parfois le type MIME peut être incorrect
+            
+            # Sauvegarde du fichier
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            # Vérification du fichier téléchargé
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                logger.info(f"PDF téléchargé avec succès: {output_path} ({os.path.getsize(output_path)} octets)")
+                return True
+            else:
+                logger.warning(f"Le PDF téléchargé est vide ou n'existe pas: {output_path}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Erreur lors du téléchargement du PDF depuis {url}: {e}")
+            return False
+    
+    def process_invoice_with_pdf(self, invoice: Dict, pdf_url: Optional[str] = None, pdf_path: Optional[str] = None) -> Optional[str]:
+        """
+        Traite une facture et son PDF, que ce soit par URL ou par chemin local
+        
+        Args:
+            invoice: Données de la facture Sellsy
+            pdf_url: URL du PDF de la facture (optionnel)
+            pdf_path: Chemin local vers le PDF de la facture (optionnel)
+            
+        Returns:
+            ID de l'enregistrement Airtable ou None en cas d'échec
+        """
+        # Formatage de la facture pour Airtable
+        formatted_invoice = self.format_invoice_for_airtable(invoice)
+        if not formatted_invoice:
+            logger.error("Échec du formatage de la facture pour Airtable")
+            return None
+        
+        # Récupération de l'ID de la facture
+        invoice_id = formatted_invoice.get("ID_Facture_Fournisseur", "")
+        
+        # Si un PDF_URL est spécifié dans l'appel de fonction, l'utiliser en priorité
+        if pdf_url:
+            formatted_invoice["PDF_URL"] = pdf_url
+            logger.info(f"URL PDF externe fournie pour la facture {invoice_id}: {pdf_url}")
+        
+        # Si on a une URL PDF dans la facture et pas de chemin local, essayer de télécharger le PDF
+        if "PDF_URL" in formatted_invoice and formatted_invoice["PDF_URL"] and not pdf_path:
+            # Création d'un répertoire temporaire pour les PDFs si besoin
+            temp_pdf_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "temp_pdfs")
+            os.makedirs(temp_pdf_dir, exist_ok=True)
+            
+            # Téléchargement du PDF
+            temp_pdf_path = os.path.join(temp_pdf_dir, f"facture_{invoice_id}.pdf")
+            download_success = self.download_pdf_from_url(formatted_invoice["PDF_URL"], temp_pdf_path)
+            
+            if download_success:
+                pdf_path = temp_pdf_path
+                logger.info(f"PDF téléchargé avec succès pour la facture {invoice_id}: {pdf_path}")
+        
+        # Insertion ou mise à jour dans Airtable
+        return self.insert_or_update_supplier_invoice(formatted_invoice, pdf_path)
