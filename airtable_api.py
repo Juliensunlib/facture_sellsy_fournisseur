@@ -393,23 +393,6 @@ class AirtableAPI:
         client_abonne_id = ""
         client_abonne_name = ""
 
-    """
-    Convertit une facture d'achat Sellsy au format Airtable
-    Gère à la fois le format V1 et le format OCR
-    
-    Args:
-        invoice: Dictionnaire contenant les données de la facture d'achat
-        
-    Returns:
-        Dictionnaire formaté pour Airtable ou None en cas d'erreur
-    """
-    # Code existant...
-    
-    # --- NOUVEAU: Récupération des champs personnalisés ---
-    numero_de_facture_custom = ""
-    client_abonne_id = ""
-    client_abonne_name = ""
-
     # Ajouter ce code pour mieux comprendre la structure des champs personnalisés
     if "customfields" in invoice:
         logger.info(f"Structure des champs personnalisés (customfields): {json.dumps(invoice['customfields'], indent=2)}")
