@@ -206,9 +206,17 @@ class SellsySupplierAPI:
         logger.info(f"📋 {len(detailed_invoices)} factures fournisseur récupérées")
         return detailed_invoices
 
-    def get_supplier_invoice_details(self, invoice_id: str) -> Optional[Dict]:
+    def get_supplier_invoice_details(self, invoice_id: str, include_custom_fields: bool = True) -> Optional[Dict]:
         """
-        Récupère les détails d'une facture fournisseur via Purchase.getOne
+        Récupère les détails d'une facture fournisseur via Purchase.getOne,
+        avec option d'inclusion des champs personnalisés
+        
+        Args:
+            invoice_id: ID de la facture fournisseur
+            include_custom_fields: Si True, inclut les champs personnalisés associés à la facture
+            
+        Returns:
+            Dictionnaire contenant les détails de la facture ou None en cas d'erreur
         """
         if not invoice_id:
             logger.error("ID de facture vide, impossible de récupérer les détails")
@@ -225,17 +233,184 @@ class SellsySupplierAPI:
         
         if response and response.get("status") == "success" and "response" in response:
             logger.info(f"Détails récupérés pour la facture {invoice_id}")
+            invoice_data = response["response"]
+            
             # Ajouter l'ID explicitement pour assurer la cohérence
-            if "response" in response and isinstance(response["response"], dict):
-                response["response"]["id"] = invoice_id
-                response["response"]["docid"] = invoice_id
+            if isinstance(invoice_data, dict):
+                invoice_data["id"] = invoice_id
+                invoice_data["docid"] = invoice_id
+                
                 # S'assurer que nous avons un numéro de facture
-                if "docnum" not in response["response"] and "ident" in response["response"]:
-                    response["response"]["docnum"] = response["response"]["ident"]
-            return response
+                if "docnum" not in invoice_data and "ident" in invoice_data:
+                    invoice_data["docnum"] = invoice_data["ident"]
+                
+                # Récupérer et intégrer les champs personnalisés si demandé
+                if include_custom_fields:
+                    custom_fields = self.get_invoice_custom_fields(invoice_id)
+                    
+                    if custom_fields:
+                        invoice_data["customFields"] = custom_fields
+                        logger.info(f"Ajout de {len(custom_fields)} champs personnalisés à la facture {invoice_id}")
+                    else:
+                        invoice_data["customFields"] = {}
+                        logger.info(f"Aucun champ personnalisé trouvé pour la facture {invoice_id}")
+            
+            return invoice_data
         else:
             logger.error(f"Impossible de récupérer les détails de la facture {invoice_id}")
             return None
+
+    def get_invoice_custom_fields(self, invoice_id: str) -> Dict[str, Any]:
+        """
+        Récupère les champs personnalisés associés à une facture fournisseur
+        
+        Args:
+            invoice_id: ID de la facture
+            
+        Returns:
+            Dictionnaire avec les valeurs des champs personnalisés (clé = ID du champ)
+        """
+        if not invoice_id:
+            logger.error("ID de facture vide, impossible de récupérer les champs personnalisés")
+            return {}
+            
+        logger.info(f"🔍 Récupération des champs personnalisés pour la facture {invoice_id}")
+        
+        params = {
+            "linkedtype": "purchase",  # Type d'entité pour les factures fournisseur
+            "linkedid": invoice_id
+        }
+        
+        response = self._make_v1_request("CustomFields.getValues", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            custom_fields = response["response"]
+            if isinstance(custom_fields, dict) and custom_fields:
+                logger.info(f"Champs personnalisés récupérés pour la facture {invoice_id}: {list(custom_fields.keys())}")
+                return custom_fields
+            else:
+                logger.info(f"Aucun champ personnalisé trouvé pour la facture {invoice_id}")
+        else:
+            logger.error(f"Erreur lors de la récupération des champs personnalisés pour la facture {invoice_id}")
+        
+        return {}
+
+    def get_custom_field_definitions(self, entity_type: str = "purchase") -> Dict[str, Dict]:
+        """
+        Récupère les définitions des champs personnalisés pour un type d'entité
+        
+        Args:
+            entity_type: Type d'entité (ex: 'purchase', 'client', 'supplier', etc.)
+            
+        Returns:
+            Dictionnaire des définitions de champs personnalisés (clé = ID du champ)
+        """
+        logger.info(f"📋 Récupération des définitions de champs personnalisés pour {entity_type}")
+        
+        # Paramètres pour filtrer les champs selon le type d'entité
+        params = {}
+        if entity_type:
+            field_param = f"useOn_{entity_type}"
+            params["search"] = {
+                field_param: "Y"
+            }
+        
+        response = self._make_v1_request("CustomFields.getList", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            result = response["response"]
+            if "result" in result and isinstance(result["result"], dict):
+                definitions = {}
+                for field_id, field_data in result["result"].items():
+                    if isinstance(field_data, dict):
+                        # Ajouter l'ID au dictionnaire du champ
+                        field_data["id"] = field_id
+                        definitions[field_id] = field_data
+                
+                logger.info(f"📋 {len(definitions)} définitions de champs personnalisés récupérées pour {entity_type}")
+                return definitions
+        
+        logger.error(f"Impossible de récupérer les définitions de champs personnalisés pour {entity_type}")
+        return {}
+
+    def get_custom_field_value(self, entity_type: str, entity_id: str, field_id: str) -> Optional[Any]:
+        """
+        Récupère la valeur d'un champ personnalisé pour une entité spécifique
+        
+        Args:
+            entity_type: Type d'entité (ex: 'purchase', 'client', 'supplier', etc.)
+            entity_id: ID de l'entité
+            field_id: ID du champ personnalisé
+            
+        Returns:
+            Valeur du champ personnalisé ou None en cas d'erreur
+        """
+        if not entity_type or not entity_id or not field_id:
+            logger.error("Paramètres invalides pour la récupération de la valeur du champ personnalisé")
+            return None
+            
+        logger.info(f"🔍 Récupération de la valeur du champ personnalisé {field_id} pour {entity_type} {entity_id}")
+        
+        params = {
+            "linkedtype": entity_type,
+            "linkedid": entity_id,
+            "cfid": field_id
+        }
+        
+        response = self._make_v1_request("CustomFields.getValues", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            # La structure de la réponse peut varier selon le type de champ
+            values = response["response"]
+            if values and field_id in values:
+                logger.info(f"Valeur récupérée pour le champ {field_id}")
+                return values[field_id]
+        
+        logger.warning(f"Aucune valeur trouvée pour le champ {field_id}")
+        return None
+
+    def format_invoice_with_custom_fields(self, invoice: Dict) -> Dict:
+        """
+        Formate les données d'une facture en incluant les champs personnalisés
+        avec leurs noms lisibles
+        
+        Args:
+            invoice: Dictionnaire contenant les données de la facture
+            
+        Returns:
+            Dictionnaire formaté avec les champs personnalisés
+        """
+        # Vérifier si nous avons déjà les champs personnalisés dans l'objet facture
+        if "customFields" not in invoice:
+            logger.info(f"Récupération des champs personnalisés pour la facture {invoice.get('id', 'N/A')}")
+            invoice["customFields"] = self.get_invoice_custom_fields(invoice.get("id", ""))
+        
+        # Récupérer les définitions des champs personnalisés pour obtenir les noms
+        cf_definitions = self.get_custom_field_definitions("purchase")
+        
+        formatted_invoice = {
+            "ID_Facture_Fournisseur": invoice.get("id", ""),
+            "Numéro": invoice.get("docnum", invoice.get("ident", "")),
+            "Date": invoice.get("displayedDate", ""),
+            "Fournisseur": invoice.get("thirdname", ""),
+            "ID_Fournisseur_Sellsy": invoice.get("thirdid", ""),
+            "Montant_HT": invoice.get("totalAmountTaxesFree", 0),
+            "Montant_TTC": invoice.get("totalAmount", 0),
+            "Statut": invoice.get("step", ""),
+            "URL": f"https://go.sellsy.com/purchase/{invoice.get('id', '')}"
+        }
+        
+        # Ajouter les champs personnalisés avec leurs noms lisibles
+        if invoice.get("customFields"):
+            for field_id, field_value in invoice["customFields"].items():
+                field_name = field_id
+                # Utiliser le nom du champ s'il est disponible dans les définitions
+                if field_id in cf_definitions:
+                    field_name = cf_definitions[field_id].get("name", field_id)
+                    
+                formatted_invoice[f"CF_{field_name}"] = field_value
+        
+        return formatted_invoice
 
     def search_purchase_invoices(self, limit: int = 100, days: int = 365) -> List[Dict]:
         """
@@ -410,39 +585,16 @@ class SellsySupplierAPI:
                 
         logger.error("Impossible de récupérer la liste des champs personnalisés")
         return []
-    
-    def get_custom_field_value(self, entity_type: str, entity_id: str, field_id: str) -> Optional[Any]:
-        """
-        Récupère la valeur d'un champ personnalisé pour une entité spécifique
-        
-        Args:
-            entity_type: Type d'entité (ex: 'client', 'supplier', 'item', etc.)
-            entity_id: ID de l'entité
-            field_id: ID du champ personnalisé
-            
-        Returns:
-            Valeur du champ personnalisé ou None en cas d'erreur
-        """
-        if not entity_type or not entity_id or not field_id:
-            logger.error("Paramètres invalides pour la récupération de la valeur du champ personnalisé")
-            return None
-            
-        logger.info(f"🔍 Récupération de la valeur du champ personnalisé {field_id} pour {entity_type} {entity_id}")
-        
-        params = {
-            "linkedtype": entity_type,
-            "linkedid": entity_id,
-            "cfid": field_id
-        }
-        
-        response = self._make_v1_request("CustomFields.getValues", params)
-        
-        if response and response.get("status") == "success" and "response" in response:
-            # La structure de la réponse peut varier selon le type de champ
-            values = response["response"]
-            if values and field_id in values:
-                logger.info(f"Valeur récupérée pour le champ {field_id}")
-                return values[field_id]
-        
-        logger.warning(f"Aucune valeur trouvée pour le champ {field_id}")
-        return None
+
+# Exemple d'utilisation:
+"""
+api = SellsySupplierAPI()
+
+# Récupérer les détails d'une facture avec les champs personnalisés
+invoice_details = api.get_supplier_invoice_details("413", include_custom_fields=True)
+
+# Formatter la facture pour un affichage lisible
+formatted_invoice = api.format_invoice_with_custom_fields(invoice_details)
+
+print(json.dumps(formatted_invoice, indent=2))
+"""
