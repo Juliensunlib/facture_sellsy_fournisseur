@@ -369,7 +369,80 @@ class SellsySupplierAPI:
         
         if response and response.get("status") == "success" and "response" in response:
             logger.info(f"Détails récupérés pour le champ personnalisé {field_id}")
-            return response
+            return response["response"]  # On retourne directement la partie response pour faciliter l'accès aux données
         else:
             logger.error(f"Impossible de récupérer les détails du champ personnalisé {field_id}")
             return None
+            
+    def get_all_custom_fields(self, type_filter: str = None) -> List[Dict]:
+        """
+        Récupère tous les champs personnalisés
+        
+        Args:
+            type_filter: Optionnel - Type de champ personnalisé à filtrer (ex: 'unit', 'text', etc.)
+            
+        Returns:
+            Liste de dictionnaires contenant les détails des champs personnalisés
+        """
+        logger.info(f"📋 Récupération de tous les champs personnalisés" + 
+                   (f" de type {type_filter}" if type_filter else ""))
+        
+        params = {}
+        if type_filter:
+            params["search"] = {
+                "type": type_filter
+            }
+            
+        response = self._make_v1_request("CustomFields.getList", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            result = response["response"]
+            if "result" in result and isinstance(result["result"], dict):
+                fields_list = []
+                for field_id, field_data in result["result"].items():
+                    # S'assurer que l'ID est inclus dans les données du champ
+                    if isinstance(field_data, dict):
+                        field_data["id"] = field_id
+                        fields_list.append(field_data)
+                    
+                logger.info(f"📋 {len(fields_list)} champs personnalisés récupérés")
+                return fields_list
+                
+        logger.error("Impossible de récupérer la liste des champs personnalisés")
+        return []
+    
+    def get_custom_field_value(self, entity_type: str, entity_id: str, field_id: str) -> Optional[Any]:
+        """
+        Récupère la valeur d'un champ personnalisé pour une entité spécifique
+        
+        Args:
+            entity_type: Type d'entité (ex: 'client', 'supplier', 'item', etc.)
+            entity_id: ID de l'entité
+            field_id: ID du champ personnalisé
+            
+        Returns:
+            Valeur du champ personnalisé ou None en cas d'erreur
+        """
+        if not entity_type or not entity_id or not field_id:
+            logger.error("Paramètres invalides pour la récupération de la valeur du champ personnalisé")
+            return None
+            
+        logger.info(f"🔍 Récupération de la valeur du champ personnalisé {field_id} pour {entity_type} {entity_id}")
+        
+        params = {
+            "linkedtype": entity_type,
+            "linkedid": entity_id,
+            "cfid": field_id
+        }
+        
+        response = self._make_v1_request("CustomFields.getValues", params)
+        
+        if response and response.get("status") == "success" and "response" in response:
+            # La structure de la réponse peut varier selon le type de champ
+            values = response["response"]
+            if values and field_id in values:
+                logger.info(f"Valeur récupérée pour le champ {field_id}")
+                return values[field_id]
+        
+        logger.warning(f"Aucune valeur trouvée pour le champ {field_id}")
+        return None
