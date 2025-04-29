@@ -575,19 +575,19 @@ class AirtableAPI:
             result["Numéro_Facture_Personnalisé"] = numero_de_facture_custom
             logger.info(f"Numéro de facture personnalisé ajouté: {numero_de_facture_custom}")
         
-    # Ajouter l'ID du client abonné s'il est disponible
-    if client_abonne_id:
-        result["ID_Client_Abonne"] = client_abonne_id
-        logger.info(f"ID client abonné ajouté: {client_abonne_id}")
+        # Ajouter l'ID du client abonné s'il est disponible
+        if client_abonne_id:
+            result["ID_Client_Abonne"] = client_abonne_id
+            logger.info(f"ID client abonné ajouté: {client_abonne_id}")
+            
+            # Ajouter le nom du client abonné s'il est disponible
+            if client_abonne_name:
+                result["Nom_Client_Abonne"] = client_abonne_name
+                logger.info(f"Nom client abonné ajouté: {client_abonne_name}")
         
-        # Ajouter le nom du client abonné s'il est disponible
-        if client_abonne_name:
-            result["Nom_Client_Abonne"] = client_abonne_name
-            logger.info(f"Nom client abonné ajouté: {client_abonne_name}")
-    
-    logger.info(f"Facture {invoice_id} formatée avec succès")
-    logger.info(f"Résultat formaté: {json.dumps(result, indent=2)}")
-    return result
+        logger.info(f"Facture {invoice_id} formatée avec succès")
+        logger.info(f"Résultat formaté: {json.dumps(result, indent=2)}")
+        return result
 
     def _format_date(self, date_str: str) -> Optional[str]:
         """
