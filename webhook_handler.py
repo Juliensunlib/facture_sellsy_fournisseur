@@ -106,38 +106,41 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         # Afficher le payload complet pour déboguer
         logger.info(f"📩 Payload complet reçu: {json.dumps(data, indent=2)}")
         
-        # Vérifier le type d'événement (adapté pour l'API v2)
-        event_type = data.get("action", "")
-        resource_type = data.get("resource", {}).get("type", "")
-        
-        logger.info(f"Action: {event_type}, Resource type: {resource_type}")
-        
-        # Vérification plus souple pour les factures fournisseur
-        # Accepte "purchase", "purchaseinvoice", "supplier_invoice", etc.
-        if not (resource_type and ("purchase" in resource_type.lower() or "supplier" in resource_type.lower() or "fournisseur" in resource_type.lower())):
-            logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {resource_type}/{event_type}")
-            return {"status": "ignored", "reason": f"event not related to supplier invoices: {resource_type}/{event_type}"}
-        
-        # Extraction de l'ID de facture fournisseur (adapté pour l'API v2) avec plus de tentatives
-        invoice_id = None
-        
-        # Tentative 1: structure classique
-        if "resource" in data and "id" in data["resource"]:
-            invoice_id = data["resource"]["id"]
-        # Tentative 2: structure alternative
-        elif "data" in data and "id" in data["data"]:
-            invoice_id = data["data"]["id"]
-        # Tentative 3: structure directe
-        elif "id" in data:
-            invoice_id = data["id"]
-        
-        # Affichage des clés pour déboguer
-        logger.info(f"Clés du payload: {list(data.keys())}")
-        if "resource" in data:
-            logger.info(f"Clés de resource: {list(data['resource'].keys())}")
-        if "data" in data:
-            logger.info(f"Clés de data: {list(data['data'].keys())}")
+        # NEW: Vérifier la structure du format Sellsy v2 (ancienne implémentation)
+        if "relatedtype" in data and "relatedid" in data:
+            # Format webhook ancien style Sellsy
+            related_type = data.get("relatedtype", "").lower()
+            invoice_id = data.get("relatedid")
+            event_type = data.get("event", "")
+            logger.info(f"Format ancien: Type: {related_type}, ID: {invoice_id}, Event: {event_type}")
             
+            # Vérifier si c'est une facture fournisseur (purInvoice)
+            if "purinvoice" not in related_type.lower():
+                logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {related_type}")
+                return {"status": "ignored", "reason": f"event not related to supplier invoices: {related_type}"}
+        else:
+            # Format webhook nouveau style API v2
+            event_type = data.get("action", "")
+            resource = data.get("resource", {})
+            resource_type = resource.get("type", "")
+            
+            logger.info(f"Format API v2: Action: {event_type}, Resource type: {resource_type}")
+            
+            # Vérification pour les factures fournisseur format API v2
+            if not (resource_type and ("purchase" in resource_type.lower() or "supplier" in resource_type.lower() or "fournisseur" in resource_type.lower())):
+                logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {resource_type}/{event_type}")
+                return {"status": "ignored", "reason": f"event not related to supplier invoices: {resource_type}/{event_type}"}
+                
+            # Extraction de l'ID dans le format API v2
+            invoice_id = None
+            if "id" in resource:
+                invoice_id = resource["id"]
+            elif "data" in data and "id" in data["data"]:
+                invoice_id = data["data"]["id"]
+            elif "id" in data:
+                invoice_id = data["id"]
+        
+        # Si aucun ID trouvé, erreur
         if not invoice_id:
             logger.error("❌ Impossible d'extraire l'ID de facture fournisseur du webhook")
             return {"status": "error", "reason": "invoice id not found"}
@@ -177,7 +180,7 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         # Téléchargement du PDF avec gestion des erreurs
         pdf_path = None
         try:
-            # Correction du nom de méthode pour correspondre à celle définie dans sellsy_api.py
+            # Récupération du PDF de la facture
             pdf_path = sellsy_api.get_supplier_invoice_pdf(invoice_id)
             if pdf_path:
                 logger.info(f"✅ PDF téléchargé: {pdf_path}")
@@ -255,5 +258,5 @@ async def root():
             "/webhook/supplier-invoice",
             "/health"
         ],
-        "version": "2.0.1"
+        "version": "2.0.2"
     }
