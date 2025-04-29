@@ -394,12 +394,13 @@ class AirtableAPI:
         client_abonne_name = ""
 
         # Ajouter ce code pour mieux comprendre la structure des champs personnalisés
-        if "customfields" in invoice:
+if "customfields" in invoice:
     logger.info(f"Structure des champs personnalisés (customfields): {json.dumps(invoice['customfields'], indent=2)}")
-        elif "custom_fields" in invoice:
+elif "custom_fields" in invoice:
     logger.info(f"Structure des champs personnalisés (custom_fields): {json.dumps(invoice['custom_fields'], indent=2)}")
-        else:
+else:
     logger.info("Aucun champ personnalisé trouvé dans la facture")
+
         # Extraction des champs personnalisés
         if "customfields" in invoice and isinstance(invoice["customfields"], dict):
             logger.info("Traitement des champs personnalisés")
