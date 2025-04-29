@@ -103,25 +103,40 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         # Convertir le payload en JSON
         data = json.loads(payload.decode('utf-8'))
         
-        logger.info(f"📩 Webhook reçu pour une facture fournisseur: {data.get('action', 'unknown')}")
+        # Afficher le payload complet pour déboguer
+        logger.info(f"📩 Payload complet reçu: {json.dumps(data, indent=2)}")
         
         # Vérifier le type d'événement (adapté pour l'API v2)
-        # Note: Dans v2, les événements sont généralement structurés différemment
         event_type = data.get("action", "")
         resource_type = data.get("resource", {}).get("type", "")
         
-        # Vérifier si l'événement concerne une facture fournisseur
-        # Adapter ces conditions selon la documentation Sellsy v2
-        if resource_type != "purchase" or not event_type:
-            logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {resource_type}/{event_type}")
-            return {"status": "ignored", "reason": "event not related to supplier invoices"}
+        logger.info(f"Action: {event_type}, Resource type: {resource_type}")
         
-        # Extraction de l'ID de facture fournisseur (adapté pour l'API v2)
+        # Vérification plus souple pour les factures fournisseur
+        # Accepte "purchase", "purchaseinvoice", "supplier_invoice", etc.
+        if not (resource_type and ("purchase" in resource_type.lower() or "supplier" in resource_type.lower() or "fournisseur" in resource_type.lower())):
+            logger.warning(f"⚠️ Événement non lié aux factures fournisseur: {resource_type}/{event_type}")
+            return {"status": "ignored", "reason": f"event not related to supplier invoices: {resource_type}/{event_type}"}
+        
+        # Extraction de l'ID de facture fournisseur (adapté pour l'API v2) avec plus de tentatives
         invoice_id = None
+        
+        # Tentative 1: structure classique
         if "resource" in data and "id" in data["resource"]:
             invoice_id = data["resource"]["id"]
+        # Tentative 2: structure alternative
         elif "data" in data and "id" in data["data"]:
             invoice_id = data["data"]["id"]
+        # Tentative 3: structure directe
+        elif "id" in data:
+            invoice_id = data["id"]
+        
+        # Affichage des clés pour déboguer
+        logger.info(f"Clés du payload: {list(data.keys())}")
+        if "resource" in data:
+            logger.info(f"Clés de resource: {list(data['resource'].keys())}")
+        if "data" in data:
+            logger.info(f"Clés de data: {list(data['data'].keys())}")
             
         if not invoice_id:
             logger.error("❌ Impossible d'extraire l'ID de facture fournisseur du webhook")
@@ -185,6 +200,7 @@ async def supplier_invoice_webhook(payload: bytes = Depends(validate_webhook)):
         return {"status": "error", "reason": "invalid json payload"}
     except Exception as e:
         logger.error(f"❌ Erreur lors du traitement du webhook: {e}")
+        logger.error(f"Détails de l'erreur: {str(e)}")
         # Ne pas révéler les détails de l'erreur dans la réponse
         return {"status": "error", "reason": "internal error"}
 
@@ -239,5 +255,5 @@ async def root():
             "/webhook/supplier-invoice",
             "/health"
         ],
-        "version": "2.0.0"
+        "version": "2.0.1"
     }
