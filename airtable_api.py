@@ -393,188 +393,188 @@ class AirtableAPI:
         client_abonne_id = ""
         client_abonne_name = ""
 
-    # Ajouter ce code pour mieux comprendre la structure des champs personnalisés
-    if "customfields" in invoice:
-        logger.info(f"Structure des champs personnalisés (customfields): {json.dumps(invoice['customfields'], indent=2)}")
-    elif "custom_fields" in invoice:
-        logger.info(f"Structure des champs personnalisés (custom_fields): {json.dumps(invoice['custom_fields'], indent=2)}")
-    else:
-        logger.info("Aucun champ personnalisé trouvé dans la facture")
+        # Ajouter ce code pour mieux comprendre la structure des champs personnalisés
+        if "customfields" in invoice:
+            logger.info(f"Structure des champs personnalisés (customfields): {json.dumps(invoice['customfields'], indent=2)}")
+        elif "custom_fields" in invoice:
+            logger.info(f"Structure des champs personnalisés (custom_fields): {json.dumps(invoice['custom_fields'], indent=2)}")
+        else:
+            logger.info("Aucun champ personnalisé trouvé dans la facture")
 
-    # Extraction des champs personnalisés - Format V1 style dictionnaire
-    if "customfields" in invoice and isinstance(invoice["customfields"], dict):
-        logger.info("Traitement des champs personnalisés (format dictionnaire)")
-        
-        # Parcourir les champs personnalisés
-        for custom_field_id, custom_field_data in invoice["customfields"].items():
-            # Recherche du champ "numero-de-facture"
-            if isinstance(custom_field_data, dict):
-                if custom_field_data.get("code") == "numero-de-facture":
-                    if "textval" in custom_field_data and custom_field_data["textval"]:
-                        numero_de_facture_custom = str(custom_field_data["textval"])
-                    elif "value" in custom_field_data:
-                        numero_de_facture_custom = str(custom_field_data["value"])
-                    elif "formatted_value" in custom_field_data:
-                        numero_de_facture_custom = str(custom_field_data["formatted_value"])
-                    logger.info(f"Champ personnalisé 'numero-de-facture' trouvé: {numero_de_facture_custom}")
-                
-                # Recherche du champ "client-abonne"
-                elif custom_field_data.get("code") == "client-abonne":
-                    # Extraction de l'ID
-                    if "numericval" in custom_field_data and custom_field_data["numericval"]:
-                        client_abonne_id = str(custom_field_data["numericval"])
+        # Extraction des champs personnalisés - Format V1 style dictionnaire
+        if "customfields" in invoice and isinstance(invoice["customfields"], dict):
+            logger.info("Traitement des champs personnalisés (format dictionnaire)")
+            
+            # Parcourir les champs personnalisés
+            for custom_field_id, custom_field_data in invoice["customfields"].items():
+                # Recherche du champ "numero-de-facture"
+                if isinstance(custom_field_data, dict):
+                    if custom_field_data.get("code") == "numero-de-facture":
+                        if "textval" in custom_field_data and custom_field_data["textval"]:
+                            numero_de_facture_custom = str(custom_field_data["textval"])
+                        elif "value" in custom_field_data:
+                            numero_de_facture_custom = str(custom_field_data["value"])
+                        elif "formatted_value" in custom_field_data:
+                            numero_de_facture_custom = str(custom_field_data["formatted_value"])
+                        logger.info(f"Champ personnalisé 'numero-de-facture' trouvé: {numero_de_facture_custom}")
                     
-                    # Extraction du nom
-                    if "formatted_value" in custom_field_data and custom_field_data["formatted_value"]:
-                        client_abonne_name = str(custom_field_data["formatted_value"])
-                    elif "value" in custom_field_data:
-                        # Si value est un dictionnaire JSON sous forme de chaîne
-                        if isinstance(custom_field_data["value"], str) and custom_field_data["value"].startswith("{"):
+                    # Recherche du champ "client-abonne"
+                    elif custom_field_data.get("code") == "client-abonne":
+                        # Extraction de l'ID
+                        if "numericval" in custom_field_data and custom_field_data["numericval"]:
+                            client_abonne_id = str(custom_field_data["numericval"])
+                        
+                        # Extraction du nom
+                        if "formatted_value" in custom_field_data and custom_field_data["formatted_value"]:
+                            client_abonne_name = str(custom_field_data["formatted_value"])
+                        elif "value" in custom_field_data:
+                            # Si value est un dictionnaire JSON sous forme de chaîne
+                            if isinstance(custom_field_data["value"], str) and custom_field_data["value"].startswith("{"):
+                                try:
+                                    value_dict = json.loads(custom_field_data["value"])
+                                    # Le format typique est {"ID":"NOM"}
+                                    if value_dict and len(value_dict) > 0:
+                                        first_key = next(iter(value_dict))
+                                        if not client_abonne_id:
+                                            client_abonne_id = str(first_key)
+                                        client_abonne_name = value_dict[first_key]
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Impossible de décoder la valeur JSON du client abonné: {custom_field_data['value']}")
+                            # Si value est un dictionnaire
+                            elif isinstance(custom_field_data["value"], dict):
+                                if "id" in custom_field_data["value"]:
+                                    client_abonne_id = str(custom_field_data["value"]["id"])
+                                if "name" in custom_field_data["value"]:
+                                    client_abonne_name = custom_field_data["value"]["name"]
+                        
+                        logger.info(f"Champ personnalisé 'client-abonne' trouvé: ID={client_abonne_id}, Nom={client_abonne_name}")
+        
+        # Format alternatif - tableau numéroté comme dans votre log
+        if "customfields" in invoice and isinstance(invoice["customfields"], dict) and not (numero_de_facture_custom or client_abonne_id):
+            logger.info("Traitement des champs personnalisés (format tableau numéroté)")
+            for _, custom_field_data in invoice["customfields"].items():
+                if isinstance(custom_field_data, dict):
+                    # Recherche du champ "numero-de-facture"
+                    if custom_field_data.get("code") == "numero-de-facture":
+                        if "textval" in custom_field_data and custom_field_data["textval"]:
+                            numero_de_facture_custom = str(custom_field_data["textval"])
+                        elif "formatted_value" in custom_field_data:
+                            numero_de_facture_custom = str(custom_field_data["formatted_value"])
+                        logger.info(f"Champ personnalisé 'numero-de-facture' trouvé (format tableau): {numero_de_facture_custom}")
+                    
+                    # Recherche du champ "client-abonne"
+                    elif custom_field_data.get("code") == "client-abonne":
+                        # Extraction de l'ID - vérifier d'abord numericval puis raw_value
+                        if "numericval" in custom_field_data and custom_field_data["numericval"]:
+                            client_abonne_id = str(custom_field_data["numericval"])
+                        elif "raw_value" in custom_field_data:
+                            client_abonne_id = str(custom_field_data["raw_value"])
+                        
+                        # Extraction du nom depuis formatted_value
+                        if "formatted_value" in custom_field_data:
+                            client_abonne_name = str(custom_field_data["formatted_value"])
+                        
+                        # Si on a une valeur JSON, essayer de l'extraire
+                        if "value" in custom_field_data and isinstance(custom_field_data["value"], str) and custom_field_data["value"].startswith("{"):
                             try:
                                 value_dict = json.loads(custom_field_data["value"])
-                                # Le format typique est {"ID":"NOM"}
-                                if value_dict and len(value_dict) > 0:
-                                    first_key = next(iter(value_dict))
-                                    if not client_abonne_id:
-                                        client_abonne_id = str(first_key)
-                                    client_abonne_name = value_dict[first_key]
-                            except json.JSONDecodeError:
-                                logger.warning(f"Impossible de décoder la valeur JSON du client abonné: {custom_field_data['value']}")
-                        # Si value est un dictionnaire
-                        elif isinstance(custom_field_data["value"], dict):
-                            if "id" in custom_field_data["value"]:
-                                client_abonne_id = str(custom_field_data["value"]["id"])
-                            if "name" in custom_field_data["value"]:
-                                client_abonne_name = custom_field_data["value"]["name"]
-                    
-                    logger.info(f"Champ personnalisé 'client-abonne' trouvé: ID={client_abonne_id}, Nom={client_abonne_name}")
-    
-    # Format alternatif - tableau numéroté comme dans votre log
-    if "customfields" in invoice and isinstance(invoice["customfields"], dict) and not (numero_de_facture_custom or client_abonne_id):
-        logger.info("Traitement des champs personnalisés (format tableau numéroté)")
-        for _, custom_field_data in invoice["customfields"].items():
-            if isinstance(custom_field_data, dict):
-                # Recherche du champ "numero-de-facture"
-                if custom_field_data.get("code") == "numero-de-facture":
-                    if "textval" in custom_field_data and custom_field_data["textval"]:
-                        numero_de_facture_custom = str(custom_field_data["textval"])
-                    elif "formatted_value" in custom_field_data:
-                        numero_de_facture_custom = str(custom_field_data["formatted_value"])
-                    logger.info(f"Champ personnalisé 'numero-de-facture' trouvé (format tableau): {numero_de_facture_custom}")
-                
-                # Recherche du champ "client-abonne"
-                elif custom_field_data.get("code") == "client-abonne":
-                    # Extraction de l'ID - vérifier d'abord numericval puis raw_value
-                    if "numericval" in custom_field_data and custom_field_data["numericval"]:
-                        client_abonne_id = str(custom_field_data["numericval"])
-                    elif "raw_value" in custom_field_data:
-                        client_abonne_id = str(custom_field_data["raw_value"])
-                    
-                    # Extraction du nom depuis formatted_value
-                    if "formatted_value" in custom_field_data:
-                        client_abonne_name = str(custom_field_data["formatted_value"])
-                    
-                    # Si on a une valeur JSON, essayer de l'extraire
-                    if "value" in custom_field_data and isinstance(custom_field_data["value"], str) and custom_field_data["value"].startswith("{"):
-                        try:
-                            value_dict = json.loads(custom_field_data["value"])
-                            # Si on a déjà trouvé un ID, vérifier si cet ID existe comme clé
-                            if client_abonne_id and client_abonne_id in value_dict:
-                                client_abonne_name = value_dict[client_abonne_id]
-                            # Sinon, prendre la première paire
-                            elif value_dict and len(value_dict) > 0:
-                                first_key = next(iter(value_dict))
-                                if not client_abonne_id:
-                                    client_abonne_id = str(first_key)
-                                client_abonne_name = value_dict[first_key]
-                        except json.JSONDecodeError:
-                            logger.warning(f"Impossible de décoder la valeur JSON du client abonné: {custom_field_data['value']}")
-                    
-                    logger.info(f"Champ personnalisé 'client-abonne' trouvé (format tableau): ID={client_abonne_id}, Nom={client_abonne_name}")
-    
-    # Format liste pour les champs personnalisés (format OCR/V2)
-    if "custom_fields" in invoice and isinstance(invoice["custom_fields"], list):
-        logger.info("Traitement des champs personnalisés (format liste)")
-        for custom_field in invoice["custom_fields"]:
-            if isinstance(custom_field, dict):
-                # Recherche du champ "numero-de-facture"
-                if custom_field.get("code") == "numero-de-facture":
-                    if "textval" in custom_field and custom_field["textval"]:
-                        numero_de_facture_custom = str(custom_field["textval"])
-                    elif "value" in custom_field:
-                        numero_de_facture_custom = str(custom_field["value"])
-                    elif "formatted_value" in custom_field:
-                        numero_de_facture_custom = str(custom_field["formatted_value"])
-                    logger.info(f"Champ personnalisé 'numero-de-facture' trouvé (format liste): {numero_de_facture_custom}")
-                
-                # Recherche du champ "client-abonne"
-                elif custom_field.get("code") == "client-abonne":
-                    # Extraction de l'ID
-                    if "numericval" in custom_field and custom_field["numericval"]:
-                        client_abonne_id = str(custom_field["numericval"])
-                    elif "raw_value" in custom_field:
-                        client_abonne_id = str(custom_field["raw_value"])
-                    
-                    # Extraction du nom
-                    if "formatted_value" in custom_field:
-                        client_abonne_name = str(custom_field["formatted_value"])
-                    
-                    # Si on a une valeur sous forme de dictionnaire
-                    if "value" in custom_field:
-                        if isinstance(custom_field["value"], dict):
-                            if "id" in custom_field["value"]:
-                                client_abonne_id = str(custom_field["value"]["id"])
-                            if "name" in custom_field["value"]:
-                                client_abonne_name = custom_field["value"]["name"]
-                        # Si valeur est une chaîne JSON
-                        elif isinstance(custom_field["value"], str) and custom_field["value"].startswith("{"):
-                            try:
-                                value_dict = json.loads(custom_field["value"])
+                                # Si on a déjà trouvé un ID, vérifier si cet ID existe comme clé
                                 if client_abonne_id and client_abonne_id in value_dict:
                                     client_abonne_name = value_dict[client_abonne_id]
+                                # Sinon, prendre la première paire
                                 elif value_dict and len(value_dict) > 0:
                                     first_key = next(iter(value_dict))
                                     if not client_abonne_id:
                                         client_abonne_id = str(first_key)
                                     client_abonne_name = value_dict[first_key]
                             except json.JSONDecodeError:
-                                logger.warning(f"Impossible de décoder la valeur JSON du client abonné: {custom_field['value']}")
+                                logger.warning(f"Impossible de décoder la valeur JSON du client abonné: {custom_field_data['value']}")
+                        
+                        logger.info(f"Champ personnalisé 'client-abonne' trouvé (format tableau): ID={client_abonne_id}, Nom={client_abonne_name}")
+        
+        # Format liste pour les champs personnalisés (format OCR/V2)
+        if "custom_fields" in invoice and isinstance(invoice["custom_fields"], list):
+            logger.info("Traitement des champs personnalisés (format liste)")
+            for custom_field in invoice["custom_fields"]:
+                if isinstance(custom_field, dict):
+                    # Recherche du champ "numero-de-facture"
+                    if custom_field.get("code") == "numero-de-facture":
+                        if "textval" in custom_field and custom_field["textval"]:
+                            numero_de_facture_custom = str(custom_field["textval"])
+                        elif "value" in custom_field:
+                            numero_de_facture_custom = str(custom_field["value"])
+                        elif "formatted_value" in custom_field:
+                            numero_de_facture_custom = str(custom_field["formatted_value"])
+                        logger.info(f"Champ personnalisé 'numero-de-facture' trouvé (format liste): {numero_de_facture_custom}")
                     
-                    logger.info(f"Champ personnalisé 'client-abonne' trouvé (format liste): ID={client_abonne_id}, Nom={client_abonne_name}")
+                    # Recherche du champ "client-abonne"
+                    elif custom_field.get("code") == "client-abonne":
+                        # Extraction de l'ID
+                        if "numericval" in custom_field and custom_field["numericval"]:
+                            client_abonne_id = str(custom_field["numericval"])
+                        elif "raw_value" in custom_field:
+                            client_abonne_id = str(custom_field["raw_value"])
+                        
+                        # Extraction du nom
+                        if "formatted_value" in custom_field:
+                            client_abonne_name = str(custom_field["formatted_value"])
+                        
+                        # Si on a une valeur sous forme de dictionnaire
+                        if "value" in custom_field:
+                            if isinstance(custom_field["value"], dict):
+                                if "id" in custom_field["value"]:
+                                    client_abonne_id = str(custom_field["value"]["id"])
+                                if "name" in custom_field["value"]:
+                                    client_abonne_name = custom_field["value"]["name"]
+                            # Si valeur est une chaîne JSON
+                            elif isinstance(custom_field["value"], str) and custom_field["value"].startswith("{"):
+                                try:
+                                    value_dict = json.loads(custom_field["value"])
+                                    if client_abonne_id and client_abonne_id in value_dict:
+                                        client_abonne_name = value_dict[client_abonne_id]
+                                    elif value_dict and len(value_dict) > 0:
+                                        first_key = next(iter(value_dict))
+                                        if not client_abonne_id:
+                                            client_abonne_id = str(first_key)
+                                        client_abonne_name = value_dict[first_key]
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Impossible de décoder la valeur JSON du client abonné: {custom_field['value']}")
+                        
+                        logger.info(f"Champ personnalisé 'client-abonne' trouvé (format liste): ID={client_abonne_id}, Nom={client_abonne_name}")
 
-    # Essayer de trouver le client abonné dans d'autres structures pour le format V1
-    if not client_abonne_id and format_v1:
-        if "related" in invoice and isinstance(invoice["related"], dict):
-            for rel_type, rel_data in invoice["related"].items():
-                if rel_type.lower() in ["client", "customer", "consumer"] and isinstance(rel_data, dict):
-                    client_abonne_id = str(rel_data.get("id", ""))
-                    client_abonne_name = rel_data.get("name", rel_data.get("displayName", ""))
-                    logger.info(f"Client abonné trouvé via related.{rel_type}: ID={client_abonne_id}, Nom={client_abonne_name}")
-                    break
-    
-    # Construction du résultat final
-    result = {
-        "ID_Facture_Fournisseur": invoice_id,
-        "Numéro": reference,
-        "Date": created_date,
-        "Fournisseur": supplier_name,
-        "ID_Fournisseur_Sellsy": supplier_id,
-        "Montant_HT": montant_ht,
-        "Montant_TTC": montant_ttc,
-        "Statut": status,
-        "URL": web_url
-    }
-    
-    # Ajouter le lien direct vers le PDF si disponible
-    if pdf_url:
-        result["PDF_URL"] = pdf_url
-        logger.info(f"PDF_URL ajouté: {pdf_url} (source: {pdf_url_field})")
-    
-    # Ajouter le numéro de facture personnalisé s'il est disponible
-    if numero_de_facture_custom:
-        result["Numéro_Facture_Personnalisé"] = numero_de_facture_custom
-        logger.info(f"Numéro de facture personnalisé ajouté: {numero_de_facture_custom}")
-    
+        # Essayer de trouver le client abonné dans d'autres structures pour le format V1
+        if not client_abonne_id and format_v1:
+            if "related" in invoice and isinstance(invoice["related"], dict):
+                for rel_type, rel_data in invoice["related"].items():
+                    if rel_type.lower() in ["client", "customer", "consumer"] and isinstance(rel_data, dict):
+                        client_abonne_id = str(rel_data.get("id", ""))
+                        client_abonne_name = rel_data.get("name", rel_data.get("displayName", ""))
+                        logger.info(f"Client abonné trouvé via related.{rel_type}: ID={client_abonne_id}, Nom={client_abonne_name}")
+                        break
+        
+        # Construction du résultat final
+        result = {
+            "ID_Facture_Fournisseur": invoice_id,
+            "Numéro": reference,
+            "Date": created_date,
+            "Fournisseur": supplier_name,
+            "ID_Fournisseur_Sellsy": supplier_id,
+            "Montant_HT": montant_ht,
+            "Montant_TTC": montant_ttc,
+            "Statut": status,
+            "URL": web_url
+        }
+        
+        # Ajouter le lien direct vers le PDF si disponible
+        if pdf_url:
+            result["PDF_URL"] = pdf_url
+            logger.info(f"PDF_URL ajouté: {pdf_url} (source: {pdf_url_field})")
+        
+        # Ajouter le numéro de facture personnalisé s'il est disponible
+        if numero_de_facture_custom:
+            result["Numéro_Facture_Personnalisé"] = numero_de_facture_custom
+            logger.info(f"Numéro de facture personnalisé ajouté: {numero_de_facture_custom}")
+        
     # Ajouter l'ID du client abonné s'il est disponible
     if client_abonne_id:
         result["ID_Client_Abonne"] = client_abonne_id
