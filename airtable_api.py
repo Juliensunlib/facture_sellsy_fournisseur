@@ -393,7 +393,6 @@ class AirtableAPI:
         client_abonne_id = ""
         client_abonne_name = ""
 
-        def format_invoice_for_airtable(self, invoice: Dict) -> Optional[Dict]:
     """
     Convertit une facture d'achat Sellsy au format Airtable
     Gère à la fois le format V1 et le format OCR
