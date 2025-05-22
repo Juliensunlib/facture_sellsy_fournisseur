@@ -1,6 +1,9 @@
 name: Sync Missing Invoices (Sellsy v2)
-
 on:
+  # Déclenchement automatique tous les jours à 4h00 du matin (UTC)
+  schedule:
+    - cron: '0 4 * * *'
+  
   # Permettre l'exécution manuelle depuis l'interface GitHub
   workflow_dispatch:
     inputs:
@@ -51,7 +54,8 @@ jobs:
       run: |
         echo "Variables d'environnement configurées pour l'API Sellsy v2."
         echo "Début de la synchronisation des factures manquantes..."
-        python main.py sync-supplier --limit ${{ github.event.inputs.limit }}
+        # Utilise la limite par défaut (1000) lors de l'exécution automatique
+        python main.py sync-supplier --limit ${{ github.event.inputs.limit || '1000' }}
         
     - name: Log completion
       run: echo "Synchronisation des factures manquantes terminée."
